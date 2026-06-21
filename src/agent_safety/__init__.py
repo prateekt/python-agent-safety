@@ -35,6 +35,7 @@ Quick start::
 
 from __future__ import annotations
 
+from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink, JsonlSink, ListSink
 from .context import (
     charge_call,
@@ -50,9 +51,13 @@ from .context import (
 from .decorators import guarded_async_tool, guarded_tool
 from .exceptions import (
     AgentSafetyError,
+    ApprovalDenied,
     GuardViolation,
+    LoopDetected,
     PermissionDenied,
     QuotaExceeded,
+    RateLimitExceeded,
+    RollbackError,
 )
 from .guards import (
     Compose,
@@ -65,11 +70,15 @@ from .guards import (
     run_guards,
 )
 from .integrations import DIALECTS, ToolRegistry, ToolSpec
+from .limits import LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
 from .quota import Quota
+from .sandbox import NetworkAllowlist, PathBoundary
+from .schema import Param, tool_description, tool_schema
+from .transaction import Transaction, async_rollback, rollback
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     # context / ``with`` construct
@@ -97,8 +106,16 @@ __all__ = [
     "RedactPII",
     "Compose",
     "run_guards",
-    # quota
+    # sandbox guards
+    "PathBoundary",
+    "NetworkAllowlist",
+    # quota & limits
     "Quota",
+    "RateLimit",
+    "LoopGuard",
+    # human-in-the-loop approval
+    "ApprovalGate",
+    "ApprovalRequest",
     # audit
     "AuditEvent",
     "AuditSink",
@@ -108,9 +125,21 @@ __all__ = [
     "ToolRegistry",
     "ToolSpec",
     "DIALECTS",
+    # schema inference
+    "tool_schema",
+    "tool_description",
+    "Param",
+    # transactional rollback
+    "rollback",
+    "async_rollback",
+    "Transaction",
     # exceptions
     "AgentSafetyError",
     "PermissionDenied",
     "GuardViolation",
     "QuotaExceeded",
+    "RateLimitExceeded",
+    "LoopDetected",
+    "ApprovalDenied",
+    "RollbackError",
 ]

@@ -2,7 +2,6 @@ import pytest
 
 from agent_safety import (
     ListSink,
-    MaxLength,
     PermissionDenied,
     PermissionSet,
     RedactPII,

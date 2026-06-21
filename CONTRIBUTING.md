@@ -19,7 +19,8 @@ core — contributions should preserve that.
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest                 # 63 tests, no network, no keys
+python -m pytest                 # 106 tests, no network, no keys
+python -m ruff check . && python -m mypy   # lint + strict type-check (CI gates on both)
 python examples/providers.py     # one policy across Anthropic/OpenAI/Gemini
 ```
 
@@ -31,18 +32,41 @@ python examples/providers.py     # one policy across Anthropic/OpenAI/Gemini
   environment (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`).
   **Never hardcode a key** — they are read from `os.environ` only.
 
+## Lint & types
+
+CI runs `ruff check .` and `mypy` (strict, on `src/`) as a separate job. The
+package ships a `py.typed` marker, so the public surface must stay fully typed.
+We keep the classic `typing` spellings (`Tuple`, `Optional`, …) for clean 3.9
+support — the pyupgrade (`UP`) ruleset is intentionally off.
+
 ## Adding a guard
 
 Implement the `Guard` protocol — an object with a `name` attribute and a
 `check(self, value, stage)` method that returns the (possibly transformed) value
-or raises `GuardViolation`. Add it to `guards.py`, export it from `__init__.py`,
-and cover it in `tests/test_guards.py`.
+or raises `GuardViolation`. Content guards live in `guards.py`; resource/sandbox
+guards (filesystem, network) live in `sandbox.py`. Export it from `__init__.py`,
+and cover it in `tests/test_guards.py` or `tests/test_sandbox.py`.
+
+## Adding a budget or gate
+
+`RateLimit`/`LoopGuard` (`limits.py`) and `ApprovalGate` (`approval.py`) plug
+into `Policy` as new fields. Any such field **must** be appended by
+`Policy.narrow` (never able to widen), threaded through `safety_context`, and
+enforced in `decorators.py` so both the sync and async tool paths honour it.
 
 ## Adding a provider dialect
 
 Extend `ToolSpec.schema`, `ToolRegistry.schemas`, and `ToolRegistry.tool_result`
 with the new dialect, add it to `DIALECTS`, cover the schema/dispatch/result
 shapes in `tests/test_integrations.py`, and add an env-gated live test.
+
+## Schema inference
+
+`schema.py` derives a tool's JSON-Schema `parameters` and description from its
+signature, type hints, and docstring; `ToolRegistry.tool` uses it whenever those
+are omitted. New type mappings go in `schema._schema_for_type` with a case in
+`tests/test_schema.py`. It must stay provider-neutral — the per-dialect shaping
+stays in `integrations.py`, which consumes the neutral object this produces.
 
 ## Pull requests
 

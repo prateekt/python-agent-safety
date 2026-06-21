@@ -3,6 +3,7 @@
 [![CI](https://github.com/prateekt/python-agent-safety/actions/workflows/ci.yml/badge.svg)](https://github.com/prateekt/python-agent-safety/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Dependencies](https://img.shields.io/badge/dependencies-none%20(stdlib)-brightgreen)
+![Typed](https://img.shields.io/badge/typed-mypy%20strict-blue)
 ![Providers](https://img.shields.io/badge/providers-Claude%20%7C%20OpenAI%20%7C%20Gemini-8A2BE2)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -78,16 +79,98 @@ Composable `check(value, stage)` objects that pass, **sanitize**, or block:
 | `DenyPattern(regex)` | block values matching a banned pattern |
 | `PromptInjectionGuard()` | tripwire for "ignore previous instructions"-style attacks |
 | `RedactPII()` | replace emails / cards / SSNs / API keys with `[REDACTED:…]` |
+| `PathBoundary(root)` | confine a filesystem path to `root` — block `../` traversal and symlink escapes |
+| `NetworkAllowlist(hosts=…)` | confine a URL to approved hosts/schemes; block private-IP / `localhost` targets (SSRF) |
 | `Compose([...])` | chain guards, threading the transformed value |
 
-### 4. Quotas and audit
+The last two are *sandbox* guards: they constrain the **resource** a value points
+at rather than its content, so they belong in `input_guards=[…]` on the tools that
+touch the filesystem or the network.
 
-`Quota(max_calls=…, max_tokens=…)` is a live budget charged (alongside any
-enclosing quota) on every guarded call; report tokens from whatever your model's
-usage object gives you via `charge_tokens(...)`. Audit sinks (`ListSink`,
-`JsonlSink`, or any callable) receive an `AuditEvent` for every permission
-decision, guard action, and quota charge — a tamper-evident record of what the
-agent tried.
+```python
+@guarded_tool("filesystem.read", input_guards=[PathBoundary("/srv/data")])
+def read_file(path: str) -> str:          # "../../etc/passwd" -> GuardViolation
+    return open(path).read()
+
+@guarded_tool("network.http", input_guards=[NetworkAllowlist(["api.weather.com"])])
+def fetch(url: str) -> str:               # http://169.254.169.254/ -> GuardViolation
+    ...
+```
+
+### 4. Budgets: quotas, rate limits, loop detection
+
+Three ways to bound *how much* and *how fast* an agent acts, all charged on every
+guarded call alongside the ones already in scope (so an inner limit can be
+tighter but never looser):
+
+| Construct | Bounds |
+|---|---|
+| `Quota(max_calls=…, max_tokens=…)` | the **total** calls/tokens an agent may spend |
+| `RateLimit(per_second=5)` | a **sliding-window** burst cap (also `per_minute=`, or `max_calls=/per_seconds=`) |
+| `LoopGuard(max_identical=3)` | a **circuit breaker** for an agent stuck repeating one tool with the same args |
+
+```python
+with safety_context(
+    PermissionSet.of("*"),
+    quota=Quota(max_calls=200, max_tokens=500_000),
+    rate_limit=RateLimit(per_second=5),     # 6th call in a second -> RateLimitExceeded
+    loop_guard=LoopGuard(max_identical=3),  # 4th identical call  -> LoopDetected
+):
+    ...
+```
+
+Report tokens from whatever your model's usage object gives you via
+`charge_tokens(...)`.
+
+### 5. Human-in-the-loop approval
+
+`ApprovalGate(require=[…capabilities…], approver=fn)` requires an explicit "yes"
+before any matching tool runs. The approver is any callable (CLI prompt, Slack
+round-trip, policy service) and may be **sync or async**; it's consulted *after*
+the permission check but *before* the tool executes, and a denial raises
+`ApprovalDenied` — which `safe_dispatch` reports back to the model instead of
+crashing the loop.
+
+```python
+def cli_ok(req) -> bool:
+    return input(f"Allow {req.tool}{req.args}? [y/N] ").lower() == "y"
+
+with safety_context(
+    PermissionSet.of("shell.exec", "filesystem.*"),
+    approval=ApprovalGate(require=["shell.exec", "filesystem.delete"], approver=cli_ok),
+):
+    run_shell("ls")          # shell.exec -> prompts for a human yes/no
+    read_file("notes.txt")   # not gated -> runs straight through
+```
+
+### 6. Transactional rollback — undo on failure
+
+Least privilege limits what an agent *can* do; rollback handles the irreversible
+things it *did* do when a later step fails. `rollback()` is a `with` block that
+records a **compensating action** next to each forward action — commit on a clean
+exit, unwind LIFO on an exception, then re-raise:
+
+```python
+with rollback() as tx:
+    row = create_record(payload)
+    tx.on_undo(delete_record, row.id)       # how to undo the line above
+    send_email(row.email)
+    tx.on_undo(send_retraction, row.email)
+    charge_card(row)                         # raises -> retraction, then delete,
+                                             #           then the error propagates
+```
+
+It's a best-effort, in-process unwind (your compensations, not a DB transaction):
+a compensation that itself fails is recorded on `tx.compensation_errors` and
+audited without stopping the rest, and the body's original exception is never
+masked. `tx.commit()` is an explicit point-of-no-return; `async_rollback()` awaits
+coroutine compensations. Every begin/commit/compensation hits the same audit sinks.
+
+### 7. Audit
+
+Audit sinks (`ListSink`, `JsonlSink`, or any callable) receive an `AuditEvent`
+for every permission decision, guard action, quota/rate charge, approval, loop
+trip, and rollback/compensation — a tamper-evident record of what the agent tried.
 
 ### `@guarded_tool` / `@guarded_async_tool`
 
@@ -122,6 +205,42 @@ def get_weather(city: str) -> str:
 tools = registry.schemas("openai")   # or "anthropic" / "gemini"
 ```
 
+### Or let the signature write the schema
+
+Hand-writing JSON Schema that just restates the signature is duplication. Omit
+`parameters` (and `description`) and `agent_safety` infers them from the type
+hints and docstring — `Annotated`/`Param` carry per-field descriptions and
+constraints, `Literal`/`Enum` become enums, defaults become optional fields:
+
+```python
+from typing import Annotated, Literal
+from agent_safety import ToolRegistry, Param
+
+registry = ToolRegistry()
+
+@registry.tool("weather.read")
+def get_weather(
+    city: Annotated[str, "city name, e.g. 'Paris'"],
+    units: Literal["metric", "imperial"] = "metric",
+    days: Annotated[int, Param(description="forecast horizon", minimum=1, maximum=14)] = 3,
+) -> str:
+    """Get the weather forecast for a city."""   # -> the tool description
+    ...
+
+tools = registry.schemas("anthropic")
+# {'name': 'get_weather', 'description': 'Get the weather forecast for a city.',
+#  'input_schema': {'type': 'object', 'properties': {
+#     'city':  {'type': 'string', 'description': "city name, e.g. 'Paris'"},
+#     'units': {'enum': ['metric', 'imperial'], 'type': 'string', 'default': 'metric'},
+#     'days':  {'type': 'integer', 'description': 'forecast horizon',
+#               'minimum': 1, 'maximum': 14, 'default': 3}},
+#   'required': ['city']}}
+```
+
+An explicit `parameters=` / `description=` always wins, and `tool_schema(fn)` is
+exported if you want the schema without the registry. Pure standard library — no
+Pydantic.
+
 Then the per-provider loop is ~5 lines; the safety-relevant call is identical:
 
 ```python
@@ -147,8 +266,10 @@ no matter which model is driving.
 cd python-agent-safety
 pip install -e ".[dev]"
 python examples/quickstart.py      # narrated single-provider walkthrough
+python examples/hardening.py       # sandbox + rate limit + loop + approval, end to end
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
-python -m pytest                   # 63 tests, standard library only
+python -m pytest                   # 106 tests, standard library only
+python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
 GEMINI_API_KEY=... python -m pytest tests/test_gemini_live.py -v
@@ -159,14 +280,21 @@ GEMINI_API_KEY=... python -m pytest tests/test_gemini_live.py -v
 ```
 src/agent_safety/
   permissions.py   PermissionSet — capability allow/deny + intersect
-  guards.py        Stage, Guard protocol, built-in guards
+  guards.py        Stage, Guard protocol, built-in content guards
+  sandbox.py       PathBoundary, NetworkAllowlist — filesystem/SSRF resource guards
   quota.py         Quota — call/token budgets
+  limits.py        RateLimit (sliding window) + LoopGuard (repeat circuit breaker)
+  approval.py      ApprovalGate / ApprovalRequest — human-in-the-loop gating
+  transaction.py   rollback() / async_rollback() — compensating (saga) transactions
   audit.py         AuditEvent, ListSink / JsonlSink
-  policy.py        Policy — permissions + guards + quotas + auditors, one-way narrow()
+  policy.py        Policy — the immutable bundle of all of the above, one-way narrow()
   context.py       safety_context(), require(), check_*(), charge_*()
   decorators.py    guarded_tool / guarded_async_tool
+  schema.py        tool_schema / Param — derive JSON-Schema from a signature
   integrations.py  ToolRegistry — schema dialects + neutral dispatch
-  exceptions.py    AgentSafetyError / PermissionDenied / GuardViolation / QuotaExceeded
+  exceptions.py    AgentSafetyError + PermissionDenied / GuardViolation / QuotaExceeded /
+                   RateLimitExceeded / LoopDetected / ApprovalDenied / RollbackError
+  py.typed         PEP 561 marker — ships inline type information to consumers
 ```
 
 ## Scope & honesty
@@ -174,7 +302,19 @@ src/agent_safety/
 The guards are **heuristics and a structural foundation**, not a complete
 security boundary by themselves. The durable guarantee is *least privilege*: even
 a prompt injection that slips past the regex tripwire still cannot invoke a
-capability the active `PermissionSet` never granted, spend past its `Quota`, or
-exfiltrate a secret the `RedactPII` output guard scrubbed — and every attempt is
-on the audit trail. Layer real moderation / secret-scanning behind the same
-`Guard` interface for production use.
+capability the active `PermissionSet` never granted, spend past its `Quota` or
+`RateLimit`, repeat itself past a `LoopGuard`, run a gated tool without an
+`ApprovalGate` "yes", or exfiltrate a secret the `RedactPII` output guard
+scrubbed — and every attempt is on the audit trail.
+
+The sandbox guards are likewise *pre-flight intent checks*, not an OS sandbox:
+`PathBoundary` resolves symlinks and `NetworkAllowlist` rejects private-IP
+literals, but neither defeats a TOCTOU race or DNS rebinding on its own. Run them
+**in front of** a real OS/network sandbox and a DNS-aware HTTP client, and layer
+real moderation / secret-scanning behind the same `Guard` interface — not instead
+of these, but with them.
+
+`rollback()` is best-effort, in-process compensation, not a distributed
+transaction: your compensators run sequentially and can themselves fail (which is
+recorded, not hidden). It bounds the blast radius of a failed multi-step action;
+it does not give you atomicity across external systems.

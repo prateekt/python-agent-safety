@@ -17,12 +17,15 @@ grant new capabilities. That one-way ratchet is what the ``with`` context relies
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field, replace
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
+from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink
-from .exceptions import PermissionDenied
+from .exceptions import ApprovalDenied, LoopDetected, PermissionDenied, RateLimitExceeded
 from .guards import Guard, Stage, run_guards
+from .limits import LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .quota import Quota
 
@@ -36,6 +39,9 @@ class Policy:
     input_guards: Tuple[Guard, ...] = ()
     output_guards: Tuple[Guard, ...] = ()
     quotas: Tuple[Quota, ...] = ()
+    rate_limits: Tuple[RateLimit, ...] = ()
+    loop_guards: Tuple[LoopGuard, ...] = ()
+    approvals: Tuple[ApprovalGate, ...] = ()
     auditors: Tuple[AuditSink, ...] = ()
 
     # -- audit ------------------------------------------------------------
@@ -72,11 +78,18 @@ class Policy:
             self.audit(AuditEvent("guard", decision, stage=stage.value))
         return result
 
-    # -- quotas -----------------------------------------------------------
+    # -- quotas & rate limits --------------------------------------------
     def charge_call(self, n: int = 1) -> None:
         for quota in self.quotas:
             quota.charge_call(n)
-        if self.quotas:
+        for limiter in self.rate_limits:
+            try:
+                for _ in range(n):
+                    limiter.charge()
+            except RateLimitExceeded:
+                self.audit(AuditEvent("rate_limit", "deny", detail=limiter.name))
+                raise
+        if self.quotas or self.rate_limits:
             self.audit(AuditEvent("quota", "charge", detail=f"calls+{n}"))
 
     def charge_tokens(self, n: int) -> None:
@@ -85,22 +98,90 @@ class Policy:
         if self.quotas:
             self.audit(AuditEvent("quota", "charge", detail=f"tokens+{n}"))
 
+    # -- loop detection ---------------------------------------------------
+    def check_loop(self, tool: str, signature: str) -> None:
+        """Record a call against every active :class:`LoopGuard`.
+
+        Raises :class:`~agent_safety.exceptions.LoopDetected` if the agent is
+        repeating *tool* with the same arguments beyond the allowed count.
+        """
+        for guard in self.loop_guards:
+            try:
+                guard.record(tool, signature)
+            except LoopDetected:
+                self.audit(AuditEvent("loop", "deny", detail=tool))
+                raise
+
+    # -- human-in-the-loop approval --------------------------------------
+    def check_approval(self, request: ApprovalRequest) -> None:
+        """Consult every matching :class:`ApprovalGate` synchronously.
+
+        Raises :class:`~agent_safety.exceptions.ApprovalDenied` if any approver
+        declines, or ``RuntimeError`` if a matching gate has an async approver
+        (use ``@guarded_async_tool`` for those).
+        """
+        for gate in self.approvals:
+            if not gate.covers(request.capability):
+                continue
+            if gate.is_async:
+                raise RuntimeError(
+                    f"{gate.name} has an async approver; the tool requiring "
+                    f"{request.capability!r} must be a @guarded_async_tool"
+                )
+            req = self._request_for(request, gate)
+            self._decide_approval(req, gate, bool(gate.approver(req)))
+
+    async def check_approval_async(self, request: ApprovalRequest) -> None:
+        """Async counterpart of :meth:`check_approval`; awaits async approvers."""
+        for gate in self.approvals:
+            if not gate.covers(request.capability):
+                continue
+            req = self._request_for(request, gate)
+            result = gate.approver(req)
+            if inspect.isawaitable(result):
+                result = await result
+            self._decide_approval(req, gate, bool(result))
+
+    @staticmethod
+    def _request_for(request: ApprovalRequest, gate: ApprovalGate) -> ApprovalRequest:
+        if gate.reason and not request.reason:
+            return replace(request, reason=gate.reason)
+        return request
+
+    def _decide_approval(
+        self, request: ApprovalRequest, gate: ApprovalGate, approved: bool
+    ) -> None:
+        self.audit(AuditEvent(
+            "approval", "allow" if approved else "deny",
+            capability=request.capability, detail=request.tool,
+        ))
+        if not approved:
+            raise ApprovalDenied(
+                request.capability, request.tool,
+                gate.reason or "approval was not granted",
+            )
+
     # -- narrowing (one-way ratchet) -------------------------------------
     def narrow(
         self,
-        permissions: PermissionSet = None,
+        permissions: Optional[PermissionSet] = None,
         *,
         prompt_guards: Iterable[Guard] = (),
         input_guards: Iterable[Guard] = (),
         output_guards: Iterable[Guard] = (),
         quotas: Iterable[Quota] = (),
+        rate_limits: Iterable[RateLimit] = (),
+        loop_guards: Iterable[LoopGuard] = (),
+        approvals: Iterable[ApprovalGate] = (),
         auditors: Iterable[AuditSink] = (),
     ) -> "Policy":
         """Return a stricter child policy.
 
         Permissions are *intersected* with ``self`` (capabilities can only be
-        removed); guards, quotas, and audit sinks are appended to the existing
-        ones.
+        removed); guards, quotas, rate limits, loop guards, approval gates, and
+        audit sinks are all appended to the existing ones. Every field can only
+        add restrictions, never remove them — the one-way ratchet the ``with``
+        context relies on.
         """
         new_perms = self.permissions
         if permissions is not None:
@@ -112,5 +193,8 @@ class Policy:
             input_guards=self.input_guards + tuple(input_guards),
             output_guards=self.output_guards + tuple(output_guards),
             quotas=self.quotas + tuple(quotas),
+            rate_limits=self.rate_limits + tuple(rate_limits),
+            loop_guards=self.loop_guards + tuple(loop_guards),
+            approvals=self.approvals + tuple(approvals),
             auditors=self.auditors + tuple(auditors),
         )

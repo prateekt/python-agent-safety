@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import IO, Any, Callable, Dict, List, Optional
 
 # A sink is anything callable with an AuditEvent.
 AuditSink = Callable[["AuditEvent"], None]
@@ -50,7 +50,7 @@ class ListSink:
     """Collect events in memory. Handy for tests and post-hoc inspection."""
 
     def __init__(self) -> None:
-        self.events: list[AuditEvent] = []
+        self.events: List[AuditEvent] = []
 
     def __call__(self, event: AuditEvent) -> None:
         self.events.append(event)
@@ -59,7 +59,7 @@ class ListSink:
 class JsonlSink:
     """Append events as JSON lines to an open text stream (file, stderr, ...)."""
 
-    def __init__(self, stream) -> None:
+    def __init__(self, stream: IO[str]) -> None:
         self.stream = stream
 
     def __call__(self, event: AuditEvent) -> None:

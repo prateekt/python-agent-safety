@@ -18,31 +18,63 @@ plumbing, and nothing tied to a specific model provider.
 from __future__ import annotations
 
 import functools
-from typing import Awaitable, Callable, Iterable, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Iterable, Tuple, TypeVar
 
+from .approval import ApprovalRequest
 from .audit import AuditEvent
 from .context import current_policy
 from .guards import Guard, Stage, run_guards
+from .policy import Policy
 
 F = TypeVar("F", bound=Callable[..., object])
 AF = TypeVar("AF", bound=Callable[..., Awaitable[object]])
 
 
-def _enter(capability, extra_in, args, kwargs):
-    """Shared pre-call pipeline: quota, permission, input guards."""
+def _signature(
+    capability: str, tool: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> str:
+    """A stable key for one tool call, used to detect identical-call loops."""
+    return f"{tool}|{capability}|{args!r}|{tuple(sorted(kwargs.items()))!r}"
+
+
+def _precheck(capability: str) -> Policy:
+    """Charge the call and assert the capability before anything irreversible."""
     policy = current_policy()
     policy.charge_call()
     policy.require(capability)
+    return policy
+
+
+def _request(
+    capability: str, tool: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> ApprovalRequest:
+    return ApprovalRequest(capability, tool, args, dict(kwargs))
+
+
+def _guard_inputs(
+    policy: Policy,
+    capability: str,
+    tool: str,
+    extra_in: Tuple[Guard, ...],
+    args: Tuple[Any, ...],
+    kwargs: Dict[str, Any],
+) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+    """Loop-check, audit the invocation, then input-guard every argument.
+
+    Runs *after* permission/approval so the loop signature and audit reflect a
+    call that was actually authorised.
+    """
+    policy.check_loop(tool, _signature(capability, tool, args, kwargs))
     policy.audit(AuditEvent("tool_call", "invoke", capability=capability))
-    args = tuple(run_guards(extra_in, policy.check_input(a), Stage.INPUT) for a in args)
-    kwargs = {
+    gargs = tuple(run_guards(extra_in, policy.check_input(a), Stage.INPUT) for a in args)
+    gkwargs = {
         k: run_guards(extra_in, policy.check_input(v), Stage.INPUT)
         for k, v in kwargs.items()
     }
-    return policy, args, kwargs
+    return gargs, gkwargs
 
 
-def _exit(policy, extra_out, result):
+def _exit(policy: Policy, extra_out: Tuple[Guard, ...], result: Any) -> Any:
     """Shared post-call pipeline: output guards."""
     result = policy.check_output(result)
     return run_guards(extra_out, result, Stage.OUTPUT)
@@ -59,10 +91,14 @@ def guarded_tool(
     extra_out = tuple(output_guards)
 
     def decorator(func: F) -> F:
+        tool = func.__name__
+
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            policy, args, kwargs = _enter(capability, extra_in, args, kwargs)
-            return _exit(policy, extra_out, func(*args, **kwargs))
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            policy = _precheck(capability)
+            policy.check_approval(_request(capability, tool, args, kwargs))
+            gargs, gkwargs = _guard_inputs(policy, capability, tool, extra_in, args, kwargs)
+            return _exit(policy, extra_out, func(*gargs, **gkwargs))
 
         wrapper.__agent_capability__ = capability  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
@@ -86,10 +122,14 @@ def guarded_async_tool(
     extra_out = tuple(output_guards)
 
     def decorator(func: AF) -> AF:
+        tool = func.__name__
+
         @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            policy, args, kwargs = _enter(capability, extra_in, args, kwargs)
-            return _exit(policy, extra_out, await func(*args, **kwargs))
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            policy = _precheck(capability)
+            await policy.check_approval_async(_request(capability, tool, args, kwargs))
+            gargs, gkwargs = _guard_inputs(policy, capability, tool, extra_in, args, kwargs)
+            return _exit(policy, extra_out, await func(*gargs, **gkwargs))
 
         wrapper.__agent_capability__ = capability  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
