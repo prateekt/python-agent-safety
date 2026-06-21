@@ -61,3 +61,80 @@ class GuardViolation(AgentSafetyError):
         self.reason = reason
         self.value = value
         super().__init__(f"[{stage}] guard {guard!r} blocked value: {reason}")
+
+
+class ApprovalDenied(AgentSafetyError):
+    """Raised when a human-in-the-loop approver rejects a guarded tool call.
+
+    Attributes:
+        capability: The capability whose call was up for approval.
+        tool: Name of the tool the agent tried to invoke.
+        reason: Human-readable explanation of the denial.
+    """
+
+    def __init__(self, capability: str, tool: str, reason: str = "approval was not granted"):
+        self.capability = capability
+        self.tool = tool
+        self.reason = reason
+        super().__init__(f"call to {tool!r} ({capability!r}) denied: {reason}")
+
+
+class RateLimitExceeded(AgentSafetyError):
+    """Raised when calls arrive faster than a context's :class:`RateLimit` allows.
+
+    Attributes:
+        limit: The number of calls permitted per window.
+        window: The window length in seconds.
+        retry_after: Seconds to wait before the oldest call ages out of the window.
+    """
+
+    def __init__(self, limit: int, window: float, retry_after: float):
+        self.limit = limit
+        self.window = window
+        self.retry_after = retry_after
+        super().__init__(
+            f"rate limit exceeded: more than {limit} call(s) per {window:g}s "
+            f"(retry in {retry_after:.3g}s)"
+        )
+
+
+class RollbackError(AgentSafetyError):
+    """Raised when one or more compensating actions fail during an explicit abort.
+
+    Only :meth:`Transaction.abort` raises this. When a ``with rollback()`` block
+    unwinds because the body raised, the *body's* exception propagates instead and
+    any compensation failures are left on ``Transaction.compensation_errors``.
+
+    Attributes:
+        errors: The exceptions raised by individual compensators, in unwind order.
+    """
+
+    def __init__(self, errors: "list[BaseException]"):
+        self.errors = list(errors)
+        joined = "; ".join(repr(e) for e in self.errors)
+        super().__init__(
+            f"{len(self.errors)} compensation(s) failed during rollback: {joined}"
+        )
+
+
+class LoopDetected(AgentSafetyError):
+    """Raised when an agent repeats the same tool call beyond the allowed count.
+
+    The classic runaway-agent failure mode: the model gets stuck invoking one
+    tool with identical arguments. A :class:`LoopGuard` trips this as a circuit
+    breaker.
+
+    Attributes:
+        tool: Name of the tool being repeated.
+        count: How many identical calls were seen (including the one that tripped).
+        limit: The maximum identical calls the guard allowed.
+    """
+
+    def __init__(self, tool: str, count: int, limit: int):
+        self.tool = tool
+        self.count = count
+        self.limit = limit
+        super().__init__(
+            f"loop detected: {tool!r} called identically {count} times "
+            f"(limit {limit})"
+        )

@@ -21,13 +21,26 @@ from __future__ import annotations
 
 import contextvars
 from contextlib import contextmanager
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Optional, Tuple, TypeVar, Union
 
+from .approval import ApprovalGate
 from .audit import AuditSink
 from .guards import Guard
+from .limits import LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
 from .quota import Quota
+
+_T = TypeVar("_T")
+
+
+def _as_tuple(value: Union[_T, Iterable[_T], None], cls: type) -> Tuple[_T, ...]:
+    """Normalize ``None`` / a single object / an iterable of them to a tuple."""
+    if value is None:
+        return ()
+    if isinstance(value, cls):
+        return (value,)  # type: ignore[return-value]
+    return tuple(value)  # type: ignore[arg-type]
 
 # The root sentinel. Outside any ``safety_context`` the effective policy is
 # deny-all, so stray agent code that forgot to establish a context fails safe.
@@ -88,13 +101,16 @@ def charge_tokens(n: int) -> None:
 
 @contextmanager
 def safety_context(
-    permissions: PermissionSet = None,
+    permissions: Optional[PermissionSet] = None,
     *,
-    policy: Policy = None,
+    policy: Optional[Policy] = None,
     prompt_guards: Iterable[Guard] = (),
     input_guards: Iterable[Guard] = (),
     output_guards: Iterable[Guard] = (),
-    quota: Quota = None,
+    quota: Optional[Quota] = None,
+    rate_limit: Union[RateLimit, Iterable[RateLimit], None] = None,
+    loop_guard: Union[LoopGuard, Iterable[LoopGuard], None] = None,
+    approval: Union[ApprovalGate, Iterable[ApprovalGate], None] = None,
     audit: Iterable[AuditSink] = (),
 ) -> Iterator[Policy]:
     """Scope a narrowed safety policy to a ``with`` block.
@@ -108,6 +124,12 @@ def safety_context(
             duration of the block.
         quota: A resource budget charged (alongside any enclosing quotas) for the
             duration of the block.
+        rate_limit: One or more :class:`RateLimit` sliding-window caps, charged
+            on every guarded call alongside any enclosing limits.
+        loop_guard: One or more :class:`LoopGuard` circuit breakers that trip on
+            repeated identical tool calls.
+        approval: One or more :class:`ApprovalGate` human-in-the-loop gates that
+            must approve a matching capability before its tool runs.
         audit: Audit sinks that receive every safety decision made inside the block.
 
     Yields:
@@ -120,12 +142,19 @@ def safety_context(
         # every nested context can then only narrow from here.
         base = Policy(permissions=PermissionSet.allow_all())
     if policy is not None:
-        # Even an explicitly supplied policy may only narrow the current one.
+        # Even an explicitly supplied policy may only narrow the current one;
+        # all of its restrictive fields are carried over (and appended), never
+        # its permissions widened.
         effective = base.narrow(
             policy.permissions,
             prompt_guards=policy.prompt_guards,
             input_guards=policy.input_guards,
             output_guards=policy.output_guards,
+            quotas=policy.quotas,
+            rate_limits=policy.rate_limits,
+            loop_guards=policy.loop_guards,
+            approvals=policy.approvals,
+            auditors=policy.auditors,
         )
     else:
         effective = base
@@ -135,6 +164,9 @@ def safety_context(
         input_guards=input_guards,
         output_guards=output_guards,
         quotas=(quota,) if quota is not None else (),
+        rate_limits=_as_tuple(rate_limit, RateLimit),
+        loop_guards=_as_tuple(loop_guard, LoopGuard),
+        approvals=_as_tuple(approval, ApprovalGate),
         auditors=audit,
     )
     token = _current.set(effective)

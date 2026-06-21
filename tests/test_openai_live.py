@@ -12,7 +12,6 @@ Model defaults to ``gpt-4o-mini``; override with ``OPENAI_MODEL``. CI does not
 run this (no key, no SDK).
 """
 
-import json
 import os
 
 import pytest

@@ -33,10 +33,12 @@ provider's response already gave you, and format the result back with
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from .decorators import guarded_tool
 from .exceptions import AgentSafetyError
+from .guards import Guard
+from .schema import tool_description, tool_schema
 
 DIALECTS = ("anthropic", "openai", "gemini")
 
@@ -98,19 +100,25 @@ class ToolRegistry:
         name: Optional[str] = None,
         description: str = "",
         parameters: Optional[Dict[str, Any]] = None,
-        input_guards=(),
-        output_guards=(),
+        input_guards: Iterable[Guard] = (),
+        output_guards: Iterable[Guard] = (),
     ) -> Callable[[Callable[..., object]], Callable[..., object]]:
-        """Decorator: register a function as a guarded, schema-carrying tool."""
-        params = parameters or {"type": "object", "properties": {}}
+        """Decorator: register a function as a guarded, schema-carrying tool.
+
+        When ``parameters`` or ``description`` are omitted they are inferred from
+        the function's signature and docstring (see :mod:`agent_safety.schema`);
+        an explicit value always wins.
+        """
 
         def decorator(func: Callable[..., object]) -> Callable[..., object]:
+            params = parameters if parameters is not None else tool_schema(func)
+            desc = tool_description(func, description)
             guarded = guarded_tool(
                 capability, input_guards=input_guards, output_guards=output_guards
             )(func)
             tool_name = name or func.__name__
             self._tools[tool_name] = ToolSpec(
-                tool_name, capability, description, params, guarded
+                tool_name, capability, desc, params, guarded
             )
             return guarded
 
@@ -173,7 +181,7 @@ class ToolRegistry:
         if dialect == "openai":
             return {"role": "tool", "tool_call_id": call_id, "content": text}
         if dialect == "gemini":
-            payload = {"error": text} if is_error else {"result": result}
+            payload: Dict[str, Any] = {"error": text} if is_error else {"result": result}
             return {"functionResponse": {"name": name, "response": payload}}
         raise ValueError(f"unknown dialect {dialect!r}; expected one of {DIALECTS}")
 

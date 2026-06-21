@@ -9,11 +9,11 @@ both. No network calls here; we simulate each provider's tool-call shape.
 """
 
 from agent_safety import (
+    ListSink,
     PermissionSet,
     Quota,
     RedactPII,
     ToolRegistry,
-    ListSink,
     safety_context,
 )
 
