@@ -33,8 +33,11 @@ pythonpath = ["src"]
 
 [tool.mypy]
 files = ["src"]
-python_version = "3.9"
 strict = true
+# No `python_version` pin: newer mypy refuses to *target* 3.9, and the code is
+# written with `from __future__ import annotations` + classic typing spellings,
+# so it checks cleanly on any interpreter. Actual 3.9 runtime support is verified
+# by the pytest matrix (3.9–3.12), not by mypy's target version.
 # Tests exercise intentionally loose/dynamic shapes; the shipped library is what
 # we hold to a strict bar.
 exclude = ["tests/", "examples/"]
