@@ -1,5 +1,11 @@
 # agent_safety
 
+[![CI](https://github.com/prateekt/python-agent-safety/actions/workflows/ci.yml/badge.svg)](https://github.com/prateekt/python-agent-safety/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![Dependencies](https://img.shields.io/badge/dependencies-none%20(stdlib)-brightgreen)
+![Providers](https://img.shields.io/badge/providers-Claude%20%7C%20OpenAI%20%7C%20Gemini-8A2BE2)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 **Idiomatic, provider-agnostic Python constructs for AI-agent safety.**
 
 Wrapping an LLM agent safely means answering, on every step: *"Is the agent
