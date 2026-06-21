@@ -28,6 +28,24 @@ class PermissionDenied(AgentSafetyError):
         super().__init__(f"capability {capability!r} denied: {reason}")
 
 
+class QuotaExceeded(AgentSafetyError):
+    """Raised when an agent exhausts a resource budget scoped to a context.
+
+    Attributes:
+        resource: What ran out (e.g. ``"calls"`` or ``"tokens"``).
+        limit: The budget that was exceeded.
+        requested: How much the offending operation asked for.
+    """
+
+    def __init__(self, resource: str, limit: int, requested: int):
+        self.resource = resource
+        self.limit = limit
+        self.requested = requested
+        super().__init__(
+            f"{resource} quota exceeded: requested {requested} but limit is {limit}"
+        )
+
+
 class GuardViolation(AgentSafetyError):
     """Raised when a prompt, input, or output fails a guard that cannot sanitize it.
 

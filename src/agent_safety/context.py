@@ -23,9 +23,11 @@ import contextvars
 from contextlib import contextmanager
 from typing import Iterable, Iterator
 
+from .audit import AuditSink
 from .guards import Guard
 from .permissions import PermissionSet
 from .policy import Policy
+from .quota import Quota
 
 # The root sentinel. Outside any ``safety_context`` the effective policy is
 # deny-all, so stray agent code that forgot to establish a context fails safe.
@@ -69,6 +71,21 @@ def check_output(value: object) -> object:
     return current_policy().check_output(value)
 
 
+def charge_call(n: int = 1) -> None:
+    """Charge *n* calls against every quota in the active context."""
+    current_policy().charge_call(n)
+
+
+def charge_tokens(n: int) -> None:
+    """Charge *n* tokens against every quota in the active context.
+
+    Report whatever your model's usage object gives you — Claude
+    ``usage.output_tokens``, OpenAI ``usage.total_tokens``, Gemini
+    ``usage_metadata.total_token_count``.
+    """
+    current_policy().charge_tokens(n)
+
+
 @contextmanager
 def safety_context(
     permissions: PermissionSet = None,
@@ -77,6 +94,8 @@ def safety_context(
     prompt_guards: Iterable[Guard] = (),
     input_guards: Iterable[Guard] = (),
     output_guards: Iterable[Guard] = (),
+    quota: Quota = None,
+    audit: Iterable[AuditSink] = (),
 ) -> Iterator[Policy]:
     """Scope a narrowed safety policy to a ``with`` block.
 
@@ -87,6 +106,9 @@ def safety_context(
             It is still narrowed by the current policy, preserving de-escalation.
         prompt_guards / input_guards / output_guards: Guards appended for the
             duration of the block.
+        quota: A resource budget charged (alongside any enclosing quotas) for the
+            duration of the block.
+        audit: Audit sinks that receive every safety decision made inside the block.
 
     Yields:
         The effective :class:`Policy` in force inside the block.
@@ -112,6 +134,8 @@ def safety_context(
         prompt_guards=prompt_guards,
         input_guards=input_guards,
         output_guards=output_guards,
+        quotas=(quota,) if quota is not None else (),
+        auditors=audit,
     )
     token = _current.set(effective)
     try:

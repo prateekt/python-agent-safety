@@ -1,17 +1,24 @@
 """agent_safety — idiomatic Python constructs for AI-agent safety.
 
-The library expresses agent safety through three familiar Python constructs:
+Provider-agnostic by design: the safety primitives govern a tool-calling agent
+the same way whether the model is **Claude, OpenAI, or Gemini**. The core has no
+LLM SDK dependency; :mod:`agent_safety.integrations` provides the thin per-provider
+glue (tool-schema dialects + a neutral dispatch).
+
+The library expresses agent safety through familiar Python constructs:
 
 * a **context manager** (``with safety_context(...)``) that scopes an agent's
-  permissions and can only ever *narrow* them inside nested blocks;
+  permissions, guards, quotas, and audit sinks — and can only ever *narrow* them
+  inside nested blocks;
 * **permission sets** (allow/deny capability patterns, deny-wins, default-deny);
-* **guards** — small composable checks/transforms applied to prompts, tool
-  inputs, and outputs — surfaced via the ``@guarded_tool`` decorator.
+* **guards** — composable checks/transforms applied to prompts, tool inputs, and
+  outputs — surfaced via the ``@guarded_tool`` / ``@guarded_async_tool`` decorators;
+* **quotas** (call/token budgets) and **audit hooks** (a record of every decision).
 
 Quick start::
 
     from agent_safety import safety_context, guarded_tool, PermissionSet
-    from agent_safety import MaxLength, RedactPII, PromptInjectionGuard
+    from agent_safety import MaxLength, RedactPII, PromptInjectionGuard, Quota
 
     @guarded_tool("filesystem.read")
     def read_file(path: str) -> str:
@@ -21,14 +28,17 @@ Quick start::
         PermissionSet.of("filesystem.read"),
         output_guards=[RedactPII()],
         prompt_guards=[PromptInjectionGuard(), MaxLength(8000)],
+        quota=Quota(max_calls=25),
     ):
-        contents = read_file("notes.txt")   # allowed + PII-redacted
-        # read_file inside a tighter context that drops the capability -> denied
+        contents = read_file("notes.txt")   # allowed, PII-redacted, budget-charged
 """
 
 from __future__ import annotations
 
+from .audit import AuditEvent, AuditSink, JsonlSink, ListSink
 from .context import (
+    charge_call,
+    charge_tokens,
     check_input,
     check_output,
     check_prompt,
@@ -37,8 +47,13 @@ from .context import (
     require,
     safety_context,
 )
-from .decorators import guarded_tool
-from .exceptions import AgentSafetyError, GuardViolation, PermissionDenied
+from .decorators import guarded_async_tool, guarded_tool
+from .exceptions import (
+    AgentSafetyError,
+    GuardViolation,
+    PermissionDenied,
+    QuotaExceeded,
+)
 from .guards import (
     Compose,
     DenyPattern,
@@ -49,10 +64,12 @@ from .guards import (
     Stage,
     run_guards,
 )
+from .integrations import DIALECTS, ToolRegistry, ToolSpec
 from .permissions import PermissionSet
 from .policy import Policy
+from .quota import Quota
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # context / ``with`` construct
@@ -63,11 +80,14 @@ __all__ = [
     "check_prompt",
     "check_input",
     "check_output",
-    # permissions
+    "charge_call",
+    "charge_tokens",
+    # permissions / policy
     "PermissionSet",
     "Policy",
-    # decorator
+    # decorators
     "guarded_tool",
+    "guarded_async_tool",
     # guards
     "Guard",
     "Stage",
@@ -77,8 +97,20 @@ __all__ = [
     "RedactPII",
     "Compose",
     "run_guards",
+    # quota
+    "Quota",
+    # audit
+    "AuditEvent",
+    "AuditSink",
+    "ListSink",
+    "JsonlSink",
+    # provider integrations
+    "ToolRegistry",
+    "ToolSpec",
+    "DIALECTS",
     # exceptions
     "AgentSafetyError",
     "PermissionDenied",
     "GuardViolation",
+    "QuotaExceeded",
 ]
