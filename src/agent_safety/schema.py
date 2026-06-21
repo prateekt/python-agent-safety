@@ -35,18 +35,18 @@ from __future__ import annotations
 import collections.abc as cabc
 import enum
 import inspect
+import types
 import typing
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, get_args, get_origin
 
-# ``T | None`` (PEP 604) is a distinct runtime type from ``typing.Union`` on 3.10+.
-_UNION_ORIGINS: Tuple[Any, ...]
-try:  # pragma: no cover - trivial import guard
-    from types import UnionType as _UnionType  # type: ignore[attr-defined]
-
-    _UNION_ORIGINS = (typing.Union, _UnionType)
-except ImportError:  # Python 3.9
-    _UNION_ORIGINS = (typing.Union,)
+# ``T | None`` (PEP 604) is a distinct runtime origin from ``typing.Union`` on
+# 3.10+, and absent on 3.9. Look it up dynamically so this stays import-clean and
+# type-checks the same whether mypy targets 3.9 or a newer interpreter.
+_UnionType = getattr(types, "UnionType", None)
+_UNION_ORIGINS: Tuple[Any, ...] = (
+    (typing.Union, _UnionType) if _UnionType is not None else (typing.Union,)
+)
 
 _PRIMITIVES: Dict[type, str] = {
     str: "string",
