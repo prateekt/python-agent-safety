@@ -87,6 +87,15 @@ def _strip_rationale(policy: Policy, capability: str, kwargs: Dict[str, Any]) ->
     return kwargs
 
 
+def _preview_text(
+    preview: Optional[Callable[..., Any]], args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> Optional[str]:
+    """Render a tool's preview, if it declares one."""
+    if preview is None:
+        return None
+    return str(preview(*args, **kwargs))
+
+
 def _request(
     capability: str,
     tool: str,
@@ -155,12 +164,15 @@ def guarded_tool(
     input_guards: Iterable[Guard] = (),
     output_guards: Iterable[Guard] = (),
     idempotent: bool = False,
+    risk: int = 0,
+    preview: Optional[Callable[..., Any]] = None,
 ) -> Callable[[F], F]:
     """Wrap a synchronous tool callable with the full safety pipeline.
 
     Set ``idempotent=True`` for a side-effect-free tool to cache its result by
-    call signature: repeated identical calls return the cached value instead of
-    re-running. (Use only for pure tools — never for one that sends an email.)
+    call signature. ``risk`` weights the call against any active risk budget.
+    ``preview`` is a function of the same arguments that returns a description of
+    what the call would do, shown to an active preview gate before it runs.
     """
     extra_in = tuple(input_guards)
     extra_out = tuple(output_guards)
@@ -178,8 +190,13 @@ def guarded_tool(
                 return func(*args, **_strip_rationale(policy, capability, kwargs))
             policy.charge_call()
             policy.require(capability)
+            policy.charge_risk(risk)
             rationale, kwargs = _extract_reasoning(policy, capability, tool, args, kwargs)
-            policy.check_approval(_request(capability, tool, args, kwargs, rationale))
+            request = _request(capability, tool, args, kwargs, rationale)
+            policy.check_approval(request)
+            policy.check_constitution(request)
+            if preview is not None and policy.requires_preview(capability):
+                policy.check_preview(request, _preview_text(preview, args, kwargs) or "")
             key = _signature(capability, tool, args, kwargs) if cache is not None else ""
             if cache is not None and key in cache:
                 # Cache the RAW result and re-apply *this* context's output guards,
@@ -205,6 +222,8 @@ def guarded_async_tool(
     input_guards: Iterable[Guard] = (),
     output_guards: Iterable[Guard] = (),
     idempotent: bool = False,
+    risk: int = 0,
+    preview: Optional[Callable[..., Any]] = None,
 ) -> Callable[[AF], AF]:
     """Async counterpart of :func:`guarded_tool`.
 
@@ -228,8 +247,13 @@ def guarded_async_tool(
                 return await func(*args, **_strip_rationale(policy, capability, kwargs))
             policy.charge_call()
             policy.require(capability)
+            policy.charge_risk(risk)
             rationale, kwargs = _extract_reasoning(policy, capability, tool, args, kwargs)
-            await policy.check_approval_async(_request(capability, tool, args, kwargs, rationale))
+            request = _request(capability, tool, args, kwargs, rationale)
+            await policy.check_approval_async(request)
+            await policy.check_constitution_async(request)
+            if preview is not None and policy.requires_preview(capability):
+                await policy.check_preview_async(request, _preview_text(preview, args, kwargs) or "")
             key = _signature(capability, tool, args, kwargs) if cache is not None else ""
             if cache is not None and key in cache:
                 # Cache the RAW result and re-apply *this* context's output guards,

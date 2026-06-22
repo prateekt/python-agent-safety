@@ -36,8 +36,12 @@ Two things to know:
 ``block_injections=`` reject "ignore previous instructions"-style inputs
 ``clean_text=``      strip hidden/invisible characters from inputs
 ``no_repeats=``      stop after N identical calls (runaway loop)
+``risk_budget=``     cap total *risk* (weight tools with ``@tool(..., risk=N)``)
 ``ask=``             ask before acting: ``True`` (console) or your own yes/no function
 ``explain=``         require a ``rationale="..."`` with each call
+``rule=`` + ``judge=``   enforce a plain-English rule via a model judge
+``preview=``         approve a tool's "what would this do?" preview before it runs
+``honeytoken=``      trip if a planted canary secret ever appears (exfiltration)
 ``log=``             watch what happens: ``True`` (print) or your own recorder
 ===================  ===================================================
 
@@ -53,11 +57,13 @@ from typing import Any, Callable, Iterable, Iterator, List, Optional, Union
 
 from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink
+from .constitution import ConstitutionGate
 from .context import safety_context
 from .decorators import guarded_async_tool, guarded_tool
 from .guards import (
     DenyPattern,
     Guard,
+    Honeytoken,
     MaxLength,
     PromptInjectionGuard,
     RedactPII,
@@ -67,7 +73,8 @@ from .guards import (
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
-from .quota import Quota
+from .preview import PreviewGate
+from .quota import Quota, RiskBudget
 from .reasoning import ReasoningGate
 
 _Names = Union[str, Iterable[str], None]
@@ -76,26 +83,36 @@ _Names = Union[str, Iterable[str], None]
 # -- @tool ----------------------------------------------------------------
 
 def _make_tool(
-    func: Callable[..., Any], capability: str, cache: bool = False
+    func: Callable[..., Any],
+    capability: str,
+    cache: bool = False,
+    risk: int = 0,
+    preview: Optional[Callable[..., Any]] = None,
 ) -> Callable[..., Any]:
     decorate = guarded_async_tool if inspect.iscoroutinefunction(func) else guarded_tool
-    return decorate(capability, idempotent=cache)(func)
+    return decorate(capability, idempotent=cache, risk=risk, preview=preview)(func)
 
 
 def tool(
-    capability: Union[str, Callable[..., Any], None] = None, *, cache: bool = False
+    capability: Union[str, Callable[..., Any], None] = None,
+    *,
+    cache: bool = False,
+    risk: int = 0,
+    preview: Optional[Callable[..., Any]] = None,
 ) -> Any:
     """Mark a function as a tool an agent may call.
 
     ``@tool`` names the capability after the function; ``@tool("my.capability")``
     names it yourself. Works on ``def`` and ``async def`` automatically. Pass
-    ``cache=True`` for a pure tool to reuse the result of identical calls.
+    ``cache=True`` for a pure tool to reuse the result of identical calls,
+    ``risk=N`` to weight it against a risk budget, or ``preview=fn`` to describe
+    what a call would do for a preview gate.
     """
     if callable(capability):                       # bare @tool
-        return _make_tool(capability, capability.__name__, cache)
+        return _make_tool(capability, capability.__name__, cache, risk, preview)
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        return _make_tool(func, capability or func.__name__, cache)
+        return _make_tool(func, capability or func.__name__, cache, risk, preview)
 
     return decorator
 
@@ -165,6 +182,22 @@ def _reasoning(explain: Union[bool, str, Iterable[str], None]) -> Optional[Reaso
     return ReasoningGate(require=patterns)
 
 
+def _constitution(
+    rule: Union[str, Iterable[str], None], judge: Optional[Callable[..., Any]]
+) -> Optional[ConstitutionGate]:
+    if not rule:
+        return None
+    if judge is None:
+        raise TypeError("rule= needs a judge= function(action, rule) -> ok/not ok")
+    return ConstitutionGate(rule, judge)
+
+
+def _preview(approver: Optional[Callable[..., Any]]) -> Optional[PreviewGate]:
+    if approver is None:
+        return None
+    return PreviewGate(approver)
+
+
 class _PrintSink:
     """A dead-simple audit sink that prints each decision."""
 
@@ -200,8 +233,13 @@ def safely(
     block_injections: bool = False,
     clean_text: bool = False,
     no_repeats: Optional[int] = None,
+    risk_budget: Optional[int] = None,
     ask: Union[bool, Callable[[ApprovalRequest], Any], None] = None,
     explain: Union[bool, str, Iterable[str], None] = None,
+    rule: Union[str, Iterable[str], None] = None,
+    judge: Optional[Callable[..., Any]] = None,
+    preview: Optional[Callable[..., Any]] = None,
+    honeytoken: Optional[str] = None,
     monitor: bool = False,
     log: Any = None,
 ) -> Iterator[Policy]:
@@ -217,6 +255,9 @@ def safely(
     elif per_minute is not None:
         rate = RateLimit(per_minute=per_minute)
     output_guards: List[Guard] = [RedactPII(), SecretScanner()] if hide_secrets else []
+    input_guards = _input_guards(max_input, block, block_injections, clean_text)
+    if honeytoken:
+        input_guards.append(Honeytoken(honeytoken))
 
     with safety_context(
         _permissions(allow, deny),
@@ -224,11 +265,14 @@ def safely(
         rate_limit=rate,
         deadline=Deadline(seconds) if seconds else None,
         concurrency=_concurrency(at_most),
-        input_guards=_input_guards(max_input, block, block_injections, clean_text),
+        risk_budget=RiskBudget(risk_budget) if risk_budget else None,
+        input_guards=input_guards,
         output_guards=output_guards,
         loop_guard=LoopGuard(no_repeats) if no_repeats else None,
         approval=_approval(ask),
         reasoning=_reasoning(explain),
+        constitution=_constitution(rule, judge),
+        preview=_preview(preview),
         enforce=False if monitor else None,
         audit=_audit(log),
     ) as policy:

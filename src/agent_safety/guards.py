@@ -23,7 +23,7 @@ import re
 from enum import Enum
 from typing import Iterable, List, Protocol, runtime_checkable
 
-from .exceptions import GuardViolation
+from .exceptions import GuardViolation, HoneytokenTripped
 
 
 class Stage(str, Enum):
@@ -233,6 +233,31 @@ class UnicodeSanitizer:
                 "value contains invisible/control characters", value=value,
             )
         return "".join(ch for ch in value if not self._is_suspect(ch))
+
+
+class Honeytoken:
+    """Trip if a planted canary value ever appears in a guarded value.
+
+    Plant the canary where an attacker would find it (a fake secret in a file the
+    agent can read, a decoy API key in a prompt). It has no legitimate use, so its
+    appearance in a tool's arguments or output means something tried to exfiltrate
+    it — raise :class:`~agent_safety.exceptions.HoneytokenTripped` and stop.
+
+    Put it on ``input_guards`` of outbound tools (it inspects what's being sent),
+    or ``output_guards`` to catch it on the way back.
+    """
+
+    def __init__(self, token: str, *, label: str = "canary"):
+        if not token:
+            raise ValueError("honeytoken must be a non-empty string")
+        self.token = token
+        self.label = label
+        self.name = f"honeytoken({label})"
+
+    def check(self, value: object, stage: Stage) -> object:
+        if isinstance(value, str) and self.token in value:
+            raise HoneytokenTripped(self.label)
+        return value
 
 
 class Compose:

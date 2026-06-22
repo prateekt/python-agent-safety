@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Optional
 
-from .exceptions import QuotaExceeded
+from .exceptions import QuotaExceeded, RiskBudgetExceeded
 
 
 @dataclass
@@ -65,3 +65,37 @@ class Quota:
             f"Quota(calls={self.calls_used}/{self.max_calls}, "
             f"tokens={self.tokens_used}/{self.max_tokens})"
         )
+
+
+@dataclass
+class RiskBudget:
+    """A budget denominated in *risk*, not calls.
+
+    Weight each tool by how dangerous it is (``@tool("db.delete", risk=10)``) and
+    cap the total an agent may spend. A few risky actions exhaust it where many
+    cheap ones wouldn't — orthogonal to the call/token :class:`Quota`. The
+    offending call raises :class:`~agent_safety.exceptions.RiskBudgetExceeded`.
+    """
+
+    max_risk: int
+    risk_used: int = 0
+
+    def __post_init__(self) -> None:
+        self._lock = Lock()
+
+    def charge(self, amount: int) -> None:
+        """Account for *amount* of risk, raising if it would exceed the budget."""
+        if amount < 0:
+            raise ValueError("risk amount must be non-negative")
+        if amount == 0:
+            return
+        with self._lock:
+            if self.risk_used + amount > self.max_risk:
+                raise RiskBudgetExceeded(self.max_risk, self.risk_used + amount)
+            self.risk_used += amount
+
+    def remaining(self) -> int:
+        return self.max_risk - self.risk_used
+
+    def __str__(self) -> str:
+        return f"RiskBudget(risk={self.risk_used}/{self.max_risk})"
