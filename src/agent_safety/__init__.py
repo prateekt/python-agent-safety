@@ -75,7 +75,7 @@ from .guards import (
     run_guards,
 )
 from .integrations import DIALECTS, ToolCall, ToolRegistry, ToolSpec, parse_tool_calls
-from .limits import Deadline, LoopGuard, RateLimit
+from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Explanation, Policy
 from .quota import Quota
@@ -94,7 +94,7 @@ from .tracing import current_span, trace_span
 from .transaction import Transaction, async_rollback, rollback
 from .validation import validate_args
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     # the easy front door (start here)
@@ -134,6 +134,7 @@ __all__ = [
     "Quota",
     "RateLimit",
     "Deadline",
+    "ConcurrencyLimit",
     "LoopGuard",
     # human-in-the-loop approval
     "ApprovalGate",

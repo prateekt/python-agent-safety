@@ -161,20 +161,23 @@ class ToolRegistry:
         input_guards: Iterable[Guard] = (),
         output_guards: Iterable[Guard] = (),
         validate: bool = False,
+        idempotent: bool = False,
     ) -> Callable[[Callable[..., object]], Callable[..., object]]:
         """Decorator: register a function as a guarded, schema-carrying tool.
 
         When ``parameters`` or ``description`` are omitted they are inferred from
         the function's signature and docstring (see :mod:`agent_safety.schema`);
         an explicit value always wins. Pass ``validate=True`` to check each call's
-        arguments against the schema before dispatch.
+        arguments against the schema before dispatch, or ``idempotent=True`` to
+        cache the result of identical calls to a pure tool.
         """
 
         def decorator(func: Callable[..., object]) -> Callable[..., object]:
             params = parameters if parameters is not None else tool_schema(func)
             desc = tool_description(func, description)
             guarded = guarded_tool(
-                capability, input_guards=input_guards, output_guards=output_guards
+                capability, input_guards=input_guards,
+                output_guards=output_guards, idempotent=idempotent,
             )(func)
             tool_name = name or func.__name__
             self._tools[tool_name] = ToolSpec(

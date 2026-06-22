@@ -28,6 +28,8 @@ Two things to know:
 ``tokens=``          most model tokens allowed (you report them)
 ``per_second=``      most calls per second  (also ``per_minute=``)
 ``seconds=``         a time budget, in seconds
+``at_most=``         most tool calls running at once (waits for a free slot)
+``monitor=``         dry run: don't block anything, just log what *would* be blocked
 ``hide_secrets=``    scrub emails / keys / secrets out of results
 ``max_input=``       reject inputs longer than this many characters
 ``block=``           text pattern(s) to reject
@@ -62,7 +64,7 @@ from .guards import (
     SecretScanner,
     UnicodeSanitizer,
 )
-from .limits import Deadline, LoopGuard, RateLimit
+from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
 from .quota import Quota
@@ -73,22 +75,27 @@ _Names = Union[str, Iterable[str], None]
 
 # -- @tool ----------------------------------------------------------------
 
-def _make_tool(func: Callable[..., Any], capability: str) -> Callable[..., Any]:
+def _make_tool(
+    func: Callable[..., Any], capability: str, cache: bool = False
+) -> Callable[..., Any]:
     decorate = guarded_async_tool if inspect.iscoroutinefunction(func) else guarded_tool
-    return decorate(capability)(func)
+    return decorate(capability, idempotent=cache)(func)
 
 
-def tool(capability: Union[str, Callable[..., Any], None] = None) -> Any:
+def tool(
+    capability: Union[str, Callable[..., Any], None] = None, *, cache: bool = False
+) -> Any:
     """Mark a function as a tool an agent may call.
 
     ``@tool`` names the capability after the function; ``@tool("my.capability")``
-    names it yourself. Works on ``def`` and ``async def`` automatically.
+    names it yourself. Works on ``def`` and ``async def`` automatically. Pass
+    ``cache=True`` for a pure tool to reuse the result of identical calls.
     """
     if callable(capability):                       # bare @tool
-        return _make_tool(capability, capability.__name__)
+        return _make_tool(capability, capability.__name__, cache)
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        return _make_tool(func, capability or func.__name__)
+        return _make_tool(func, capability or func.__name__, cache)
 
     return decorator
 
@@ -127,6 +134,14 @@ def _input_guards(
     if max_input:
         guards.append(MaxLength(max_input))
     return guards
+
+
+def _concurrency(at_most: Union[int, ConcurrencyLimit, None]) -> Optional[ConcurrencyLimit]:
+    if at_most is None:
+        return None
+    if isinstance(at_most, ConcurrencyLimit):
+        return at_most  # a shared limit, e.g. capping several agents together
+    return ConcurrencyLimit(at_most)
 
 
 def _console_approver(request: ApprovalRequest) -> bool:
@@ -178,6 +193,7 @@ def safely(
     per_second: Optional[int] = None,
     per_minute: Optional[int] = None,
     seconds: Optional[float] = None,
+    at_most: Union[int, ConcurrencyLimit, None] = None,
     hide_secrets: bool = False,
     max_input: Optional[int] = None,
     block: _Names = None,
@@ -186,6 +202,7 @@ def safely(
     no_repeats: Optional[int] = None,
     ask: Union[bool, Callable[[ApprovalRequest], Any], None] = None,
     explain: Union[bool, str, Iterable[str], None] = None,
+    monitor: bool = False,
     log: Any = None,
 ) -> Iterator[Policy]:
     """Run a block of code under simple, plain-English safety rules.
@@ -206,11 +223,13 @@ def safely(
         quota=quota,
         rate_limit=rate,
         deadline=Deadline(seconds) if seconds else None,
+        concurrency=_concurrency(at_most),
         input_guards=_input_guards(max_input, block, block_injections, clean_text),
         output_guards=output_guards,
         loop_guard=LoopGuard(no_repeats) if no_repeats else None,
         approval=_approval(ask),
         reasoning=_reasoning(explain),
+        enforce=False if monitor else None,
         audit=_audit(log),
     ) as policy:
         yield policy

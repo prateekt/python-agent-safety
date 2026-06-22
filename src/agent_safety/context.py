@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import contextvars
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Iterable, Iterator, Optional, Tuple, TypeVar, Union
 
 from .approval import ApprovalGate
 from .audit import AuditSink
 from .guards import Guard
-from .limits import Deadline, LoopGuard, RateLimit
+from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
 from .quota import Quota
@@ -111,9 +112,11 @@ def safety_context(
     quota: Optional[Quota] = None,
     rate_limit: Union[RateLimit, Iterable[RateLimit], None] = None,
     deadline: Union[Deadline, Iterable[Deadline], None] = None,
+    concurrency: Union[ConcurrencyLimit, Iterable[ConcurrencyLimit], None] = None,
     loop_guard: Union[LoopGuard, Iterable[LoopGuard], None] = None,
     approval: Union[ApprovalGate, Iterable[ApprovalGate], None] = None,
     reasoning: Union[ReasoningGate, Iterable[ReasoningGate], None] = None,
+    enforce: Optional[bool] = None,
     audit: Iterable[AuditSink] = (),
 ) -> Iterator[Policy]:
     """Scope a narrowed safety policy to a ``with`` block.
@@ -132,21 +135,34 @@ def safety_context(
         deadline: One or more :class:`Deadline` wall-clock budgets.
         loop_guard: One or more :class:`LoopGuard` circuit breakers that trip on
             repeated identical tool calls.
+        concurrency: One or more :class:`ConcurrencyLimit` caps on how many
+            guarded tool calls may run at once (share one across agents to cap
+            their combined parallelism).
         approval: One or more :class:`ApprovalGate` human-in-the-loop gates that
             must approve a matching capability before its tool runs.
         reasoning: One or more :class:`ReasoningGate` gates that require the agent
             to supply a ``rationale=`` justifying a matching capability's call.
+        enforce: ``False`` puts the block in *monitor* (dry-run) mode — guarded
+            tool calls are not blocked, but a would-be permission denial is
+            recorded to audit. Nested blocks can switch monitor → enforce
+            (tighten) but never enforce → monitor (the one-way ratchet).
         audit: Audit sinks that receive every safety decision made inside the block.
 
     Yields:
         The effective :class:`Policy` in force inside the block.
     """
-    base = current_policy()
-    if base is _ROOT:
+    outer = current_policy()
+    top_level = outer is _ROOT
+    base = outer
+    if top_level:
         # Top-level context: trusted host code defines the trust ceiling. Start
         # from full authority so the supplied permissions are granted as-is;
-        # every nested context can then only narrow from here.
-        base = Policy(permissions=PermissionSet.allow_all())
+        # every nested context can then only narrow from here. Monitor mode, like
+        # permissions, is the host's choice to make here.
+        base = Policy(
+            permissions=PermissionSet.allow_all(),
+            enforce=(enforce if enforce is not None else True),
+        )
     if policy is not None:
         # Even an explicitly supplied policy may only narrow the current one;
         # all of its restrictive fields are carried over (and appended), never
@@ -159,6 +175,7 @@ def safety_context(
             quotas=policy.quotas,
             rate_limits=policy.rate_limits,
             deadlines=policy.deadlines,
+            concurrency_limits=policy.concurrency_limits,
             loop_guards=policy.loop_guards,
             approvals=policy.approvals,
             reasonings=policy.reasonings,
@@ -174,11 +191,16 @@ def safety_context(
         quotas=(quota,) if quota is not None else (),
         rate_limits=_as_tuple(rate_limit, RateLimit),
         deadlines=_as_tuple(deadline, Deadline),
+        concurrency_limits=_as_tuple(concurrency, ConcurrencyLimit),
         loop_guards=_as_tuple(loop_guard, LoopGuard),
         approvals=_as_tuple(approval, ApprovalGate),
         reasonings=_as_tuple(reasoning, ReasoningGate),
         auditors=audit,
     )
+    # Monitor mode can only tighten in nested blocks: a child may switch
+    # monitor -> enforce, never enforce -> monitor.
+    if not top_level and enforce is not None:
+        effective = replace(effective, enforce=(outer.enforce or enforce))
     token = _current.set(effective)
     try:
         yield effective

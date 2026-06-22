@@ -18,7 +18,20 @@ plumbing, and nothing tied to a specific model provider.
 from __future__ import annotations
 
 import functools
-from typing import Any, Awaitable, Callable, Dict, Iterable, Optional, Tuple, TypeVar
+from contextlib import AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+)
 
 from .approval import ApprovalRequest
 from .audit import AuditEvent
@@ -30,20 +43,48 @@ from .reasoning import RATIONALE_KWARG, ReasoningRequest
 F = TypeVar("F", bound=Callable[..., object])
 AF = TypeVar("AF", bound=Callable[..., Awaitable[object]])
 
+_CACHE_MAX = 256
+
 
 def _signature(
     capability: str, tool: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]
 ) -> str:
-    """A stable key for one tool call, used to detect identical-call loops."""
+    """A stable key for one tool call, used for loop detection and caching."""
     return f"{tool}|{capability}|{args!r}|{tuple(sorted(kwargs.items()))!r}"
 
 
-def _precheck(capability: str) -> Policy:
-    """Charge the call and assert the capability before anything irreversible."""
-    policy = current_policy()
-    policy.charge_call()
-    policy.require(capability)
-    return policy
+@contextmanager
+def _hold_concurrency(policy: Policy) -> Iterator[None]:
+    """Acquire every active sync concurrency slot for the duration of a call."""
+    with ExitStack() as stack:
+        for limit in policy.concurrency_limits:
+            stack.enter_context(limit.hold_sync())
+        yield
+
+
+@asynccontextmanager
+async def _hold_concurrency_async(policy: Policy) -> AsyncIterator[None]:
+    async with AsyncExitStack() as stack:
+        for limit in policy.concurrency_limits:
+            await stack.enter_async_context(limit.hold_async())
+        yield
+
+
+def _cache_put(cache: Dict[str, Any], order: List[str], key: str, value: Any) -> None:
+    cache[key] = value
+    order.append(key)
+    if len(order) > _CACHE_MAX:
+        cache.pop(order.pop(0), None)
+
+
+def _strip_rationale(policy: Policy, capability: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop the reserved ``rationale`` kwarg when a reasoning gate covers
+    *capability* — used in monitor mode, where the reasoning check is skipped but
+    the reserved keyword still must not reach the underlying tool.
+    """
+    if policy.requires_reasoning(capability):
+        return {k: v for k, v in kwargs.items() if k != RATIONALE_KWARG}
+    return kwargs
 
 
 def _request(
@@ -113,21 +154,44 @@ def guarded_tool(
     *,
     input_guards: Iterable[Guard] = (),
     output_guards: Iterable[Guard] = (),
+    idempotent: bool = False,
 ) -> Callable[[F], F]:
-    """Wrap a synchronous tool callable with the full safety pipeline."""
+    """Wrap a synchronous tool callable with the full safety pipeline.
+
+    Set ``idempotent=True`` for a side-effect-free tool to cache its result by
+    call signature: repeated identical calls return the cached value instead of
+    re-running. (Use only for pure tools — never for one that sends an email.)
+    """
     extra_in = tuple(input_guards)
     extra_out = tuple(output_guards)
 
     def decorator(func: F) -> F:
         tool = func.__name__
+        cache: Optional[Dict[str, Any]] = {} if idempotent else None
+        order: List[str] = []
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            policy = _precheck(capability)
+            policy = current_policy()
+            if not policy.enforce:                      # monitor / dry-run mode
+                policy.note_monitor(capability)
+                return func(*args, **_strip_rationale(policy, capability, kwargs))
+            policy.charge_call()
+            policy.require(capability)
             rationale, kwargs = _extract_reasoning(policy, capability, tool, args, kwargs)
             policy.check_approval(_request(capability, tool, args, kwargs, rationale))
+            key = _signature(capability, tool, args, kwargs) if cache is not None else ""
+            if cache is not None and key in cache:
+                # Cache the RAW result and re-apply *this* context's output guards,
+                # so a cached value can never bypass redaction in a stricter scope.
+                policy.audit(AuditEvent("cache", "hit", capability=capability))
+                return _exit(policy, extra_out, cache[key])
             gargs, gkwargs = _guard_inputs(policy, capability, tool, extra_in, args, kwargs)
-            return _exit(policy, extra_out, func(*gargs, **gkwargs))
+            with _hold_concurrency(policy):
+                result = func(*gargs, **gkwargs)
+            if cache is not None:
+                _cache_put(cache, order, key, result)
+            return _exit(policy, extra_out, result)
 
         wrapper.__agent_capability__ = capability  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
@@ -140,6 +204,7 @@ def guarded_async_tool(
     *,
     input_guards: Iterable[Guard] = (),
     output_guards: Iterable[Guard] = (),
+    idempotent: bool = False,
 ) -> Callable[[AF], AF]:
     """Async counterpart of :func:`guarded_tool`.
 
@@ -152,14 +217,31 @@ def guarded_async_tool(
 
     def decorator(func: AF) -> AF:
         tool = func.__name__
+        cache: Optional[Dict[str, Any]] = {} if idempotent else None
+        order: List[str] = []
 
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            policy = _precheck(capability)
+            policy = current_policy()
+            if not policy.enforce:                      # monitor / dry-run mode
+                policy.note_monitor(capability)
+                return await func(*args, **_strip_rationale(policy, capability, kwargs))
+            policy.charge_call()
+            policy.require(capability)
             rationale, kwargs = _extract_reasoning(policy, capability, tool, args, kwargs)
             await policy.check_approval_async(_request(capability, tool, args, kwargs, rationale))
+            key = _signature(capability, tool, args, kwargs) if cache is not None else ""
+            if cache is not None and key in cache:
+                # Cache the RAW result and re-apply *this* context's output guards,
+                # so a cached value can never bypass redaction in a stricter scope.
+                policy.audit(AuditEvent("cache", "hit", capability=capability))
+                return _exit(policy, extra_out, cache[key])
             gargs, gkwargs = _guard_inputs(policy, capability, tool, extra_in, args, kwargs)
-            return _exit(policy, extra_out, await func(*gargs, **gkwargs))
+            async with _hold_concurrency_async(policy):
+                result = await func(*gargs, **gkwargs)
+            if cache is not None:
+                _cache_put(cache, order, key, result)
+            return _exit(policy, extra_out, result)
 
         wrapper.__agent_capability__ = capability  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
