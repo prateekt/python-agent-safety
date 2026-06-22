@@ -32,7 +32,7 @@ from .exceptions import (
     RateLimitExceeded,
 )
 from .guards import Guard, Stage, run_guards
-from .limits import Deadline, LoopGuard, RateLimit
+from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .quota import Quota
 from .reasoning import ReasoningGate, ReasoningRequest
@@ -63,10 +63,14 @@ class Policy:
     quotas: Tuple[Quota, ...] = ()
     rate_limits: Tuple[RateLimit, ...] = ()
     deadlines: Tuple[Deadline, ...] = ()
+    concurrency_limits: Tuple[ConcurrencyLimit, ...] = ()
     loop_guards: Tuple[LoopGuard, ...] = ()
     approvals: Tuple[ApprovalGate, ...] = ()
     reasonings: Tuple[ReasoningGate, ...] = ()
     auditors: Tuple[AuditSink, ...] = ()
+    # When False the policy is in *monitor* (dry-run) mode: guarded tool calls
+    # are not blocked, but a would-be permission denial is recorded to audit.
+    enforce: bool = True
 
     # -- audit ------------------------------------------------------------
     def audit(self, event: AuditEvent) -> None:
@@ -89,6 +93,15 @@ class Policy:
         else:
             self.audit(AuditEvent("permission", "deny", capability=capability))
             raise PermissionDenied(capability)
+
+    def note_monitor(self, capability: str) -> None:
+        """Monitor (dry-run) accounting: record whether *capability* would be
+        denied, without blocking. Used when :attr:`enforce` is ``False`` so you
+        can see what a policy *would* stop before turning it on for real.
+        """
+        decision = "allow" if self.permissions.allows(capability) else "would_deny"
+        self.audit(AuditEvent("permission", decision, capability=capability))
+        self.audit(AuditEvent("tool_call", "invoke", capability=capability))
 
     # -- content checks ---------------------------------------------------
     def check_prompt(self, value: object) -> object:
@@ -251,6 +264,7 @@ class Policy:
         quotas: Iterable[Quota] = (),
         rate_limits: Iterable[RateLimit] = (),
         deadlines: Iterable[Deadline] = (),
+        concurrency_limits: Iterable[ConcurrencyLimit] = (),
         loop_guards: Iterable[LoopGuard] = (),
         approvals: Iterable[ApprovalGate] = (),
         reasonings: Iterable[ReasoningGate] = (),
@@ -276,6 +290,7 @@ class Policy:
             quotas=self.quotas + tuple(quotas),
             rate_limits=self.rate_limits + tuple(rate_limits),
             deadlines=self.deadlines + tuple(deadlines),
+            concurrency_limits=self.concurrency_limits + tuple(concurrency_limits),
             loop_guards=self.loop_guards + tuple(loop_guards),
             approvals=self.approvals + tuple(approvals),
             reasonings=self.reasonings + tuple(reasonings),

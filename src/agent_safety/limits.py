@@ -20,10 +20,12 @@ clock adjustments.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import deque
-from threading import Lock
-from typing import Deque, Optional
+from contextlib import asynccontextmanager, contextmanager
+from threading import BoundedSemaphore, Lock
+from typing import AsyncIterator, Deque, Dict, Iterator, Optional, Tuple
 
 from .exceptions import DeadlineExceeded, LoopDetected, RateLimitExceeded
 
@@ -177,6 +179,59 @@ class LoopGuard:
             count = self._recent.count(signature)
             if count > self.max_identical:
                 raise LoopDetected(tool, count, self.max_identical)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class ConcurrencyLimit:
+    """Allow at most *max_concurrent* guarded tool calls to run at the same time.
+
+    A semaphore held around each tool's execution. Unlike the other limits it
+    doesn't reject — it *waits* until a slot is free, then proceeds. Share one
+    instance across several agents' ``safely(...)`` blocks to cap their combined
+    parallelism (e.g. "no more than 4 calls to the flaky API at once, total").
+
+    Works under both threads (sync tools) and ``asyncio`` (async tools). For async,
+    the cap applies per event loop — agents sharing a loop are capped together, and
+    reusing one instance across separate ``asyncio.run`` calls is safe.
+    """
+
+    def __init__(self, max_concurrent: int):
+        if max_concurrent < 1:
+            raise ValueError("max_concurrent must be >= 1")
+        self.max_concurrent = max_concurrent
+        self.name = f"concurrency({max_concurrent})"
+        self._sync_sem = BoundedSemaphore(max_concurrent)
+        # An asyncio.Semaphore is bound to one event loop, so keep one per loop:
+        # tasks in the same loop share the cap; a fresh loop (e.g. a second
+        # asyncio.run) gets its own instead of crashing on a cross-loop future.
+        self._async_sems: Dict[int, Tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]] = {}
+        self._init_lock = Lock()
+
+    def _async_semaphore(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        key = id(loop)
+        with self._init_lock:
+            entry = self._async_sems.get(key)
+            if entry is None or entry[0] is not loop:   # new loop, or id reused
+                semaphore = asyncio.Semaphore(self.max_concurrent)
+                self._async_sems[key] = (loop, semaphore)
+                return semaphore
+            return entry[1]
+
+    @contextmanager
+    def hold_sync(self) -> Iterator[None]:
+        self._sync_sem.acquire()
+        try:
+            yield
+        finally:
+            self._sync_sem.release()
+
+    @asynccontextmanager
+    async def hold_async(self) -> AsyncIterator[None]:
+        async with self._async_semaphore():
+            yield
 
     def __str__(self) -> str:
         return self.name

@@ -44,11 +44,13 @@ with safely(
     calls=25,                       # most tool calls
     per_second=5,                   # speed limit
     seconds=30,                     # time budget
+    at_most=4,                      # most tool calls running at once
     hide_secrets=True,              # scrub emails / API keys from results
     block_injections=True,          # reject "ignore previous instructions" inputs
     no_repeats=3,                   # stop a runaway loop
     ask=True,                       # ask you (y/n) before each action
     explain=True,                   # require a rationale="..." with each call
+    monitor=True,                   # dry run: don't block, just log what WOULD block
     log=True,                       # print every decision
 ):
     ...
@@ -156,6 +158,7 @@ tighter but never looser):
 | `Quota(max_calls=…, max_tokens=…)` | the **total** calls/tokens an agent may spend |
 | `RateLimit(per_second=5)` | a **sliding-window** burst cap (also `per_minute=`, or `max_calls=/per_seconds=`) |
 | `Deadline(seconds=30)` | a **wall-clock** budget, timed from the first action |
+| `ConcurrencyLimit(4)` | most tool calls running **at once** — share one across agents to cap them together |
 | `LoopGuard(max_identical=3)` | a **circuit breaker** for an agent stuck repeating one tool with the same args |
 
 ```python
@@ -172,7 +175,28 @@ with safety_context(
 Report tokens from whatever your model's usage object gives you via
 `charge_tokens(...)`.
 
-### 5. Human-in-the-loop approval
+**Many agents at once.** Because the policy lives in a `contextvars.ContextVar`,
+every thread and every `asyncio` task automatically gets its *own* rules — so
+running several agents concurrently is just several `safely(...)` blocks, fully
+isolated. Give each agent different powers, and share one `ConcurrencyLimit` to
+cap their *combined* parallelism. See [`examples/multi_agent.py`](examples/multi_agent.py).
+
+### 5. Monitor mode (dry run)
+
+Adopting least privilege on a *working* agent is scary — what if you forgot to
+allow something? Run in monitor mode first: nothing is blocked, but every would-be
+denial is recorded. Watch the log, see exactly which capabilities the agent needs,
+then turn enforcement on.
+
+```python
+with safely(allow="read_file", monitor=True, log=True):
+    delete_everything()    # runs — but logs  permission: would_deny  delete_everything
+```
+
+Monitor mode obeys the same ratchet: a nested block can switch monitor → enforce
+(tighten), never enforce → monitor.
+
+### 6. Human-in-the-loop approval
 
 `ApprovalGate(require=[…capabilities…], approver=fn)` requires an explicit "yes"
 before any matching tool runs. The approver is any callable (CLI prompt, Slack
@@ -193,7 +217,7 @@ with safety_context(
     read_file("notes.txt")   # not gated -> runs straight through
 ```
 
-### 6. Explainability: make the agent say *why*
+### 7. Explainability: make the agent say *why*
 
 Least privilege limits *what* an agent may do; a `ReasoningGate` makes it justify
 *why* before it does it. For matching capabilities the agent must supply a
@@ -217,7 +241,7 @@ stamped with the active `trace_span`, giving a replayable record of *stated inte
 alongside the decisions it triggered. A validator (`ReasoningGate(..., validator=fn)`)
 can even hold the rationale to a quality bar — e.g. an LLM-as-judge.
 
-### 7. Transactional rollback — undo on failure
+### 8. Transactional rollback — undo on failure
 
 Least privilege limits what an agent *can* do; rollback handles the irreversible
 things it *did* do when a later step fails. `rollback()` is a `with` block that
@@ -240,7 +264,7 @@ audited without stopping the rest, and the body's original exception is never
 masked. `tx.commit()` is an explicit point-of-no-return; `async_rollback()` awaits
 coroutine compensations. Every begin/commit/compensation hits the same audit sinks.
 
-### 8. Audit, tracing & metrics
+### 9. Audit, tracing & metrics
 
 Audit sinks (`ListSink`, `JsonlSink`, or any callable) receive an `AuditEvent` for
 every permission decision, guard action, quota/rate charge, approval, reasoning,
@@ -353,10 +377,11 @@ cd python-agent-safety
 pip install -e ".[dev]"
 python examples/easy.py            # the simplest possible intro (@tool + safely)
 python examples/first_agent.py     # a complete offline agent loop (see TUTORIAL.md)
+python examples/multi_agent.py     # two agents, different powers, a shared concurrency cap
 python examples/quickstart.py      # narrated single-provider walkthrough
 python examples/hardening.py       # sandbox + limits + approval + reasoning + rollback
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
-python -m pytest                   # 201 tests, standard library only
+python -m pytest                   # 212 tests, standard library only
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
@@ -372,7 +397,7 @@ src/agent_safety/
   guards.py        Stage, Guard protocol, content + security guards (Secret/Unicode)
   sandbox.py       PathBoundary, NetworkAllowlist — filesystem/SSRF resource guards
   quota.py         Quota — call/token budgets
-  limits.py        RateLimit (sliding window) + Deadline (wall-clock) + LoopGuard
+  limits.py        RateLimit + Deadline + ConcurrencyLimit + LoopGuard
   approval.py      ApprovalGate / ApprovalRequest — human-in-the-loop gating
   reasoning.py     ReasoningGate + thought_trace / record_thought — explainability
   transaction.py   rollback() / async_rollback() — compensating (saga) transactions
