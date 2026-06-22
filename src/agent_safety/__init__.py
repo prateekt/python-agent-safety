@@ -49,6 +49,7 @@ from .context import (
     safety_context,
 )
 from .decorators import guarded_async_tool, guarded_tool
+from .easy import safely, tool
 from .exceptions import (
     AgentSafetyError,
     ApprovalDenied,
@@ -93,9 +94,12 @@ from .tracing import current_span, trace_span
 from .transaction import Transaction, async_rollback, rollback
 from .validation import validate_args
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
+    # the easy front door (start here)
+    "tool",
+    "safely",
     # context / ``with`` construct
     "safety_context",
     "current_policy",
