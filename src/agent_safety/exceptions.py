@@ -98,6 +98,51 @@ class RateLimitExceeded(AgentSafetyError):
         )
 
 
+class ConstitutionViolation(AgentSafetyError):
+    """Raised when a model judge rules a tool call breaks a plain-English rule.
+
+    Attributes:
+        capability: The capability of the call that was judged.
+        tool: The tool the agent tried to invoke.
+        rule: The rule the call was found to violate.
+    """
+
+    def __init__(self, capability: str, tool: str, rule: str):
+        self.capability = capability
+        self.tool = tool
+        self.rule = rule
+        super().__init__(f"call to {tool!r} ({capability!r}) violates the rule: {rule!r}")
+
+
+class HoneytokenTripped(AgentSafetyError):
+    """Raised when a planted canary secret appears in a guarded value.
+
+    A honeytoken never legitimately flows through the agent, so its appearance is
+    strong evidence the agent was hijacked and is trying to exfiltrate.
+
+    Attributes:
+        label: A name for the tripped canary (not the secret value itself).
+    """
+
+    def __init__(self, label: str):
+        self.label = label
+        super().__init__(f"honeytoken {label!r} appeared in a value — possible exfiltration")
+
+
+class RiskBudgetExceeded(AgentSafetyError):
+    """Raised when an agent's cumulative action *risk* exceeds its budget.
+
+    Attributes:
+        limit: The risk budget.
+        requested: The cumulative risk the offending call would reach.
+    """
+
+    def __init__(self, limit: int, requested: int):
+        self.limit = limit
+        self.requested = requested
+        super().__init__(f"risk budget exceeded: would reach {requested} but limit is {limit}")
+
+
 class ExplanationRequired(AgentSafetyError):
     """Raised when an agent invokes a gated tool without an adequate rationale.
 

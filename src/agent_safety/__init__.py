@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink, JsonlSink, ListSink, MetricsSink
+from .constitution import ConstitutionGate
 from .context import (
     charge_call,
     charge_tokens,
@@ -53,19 +54,23 @@ from .easy import safely, tool
 from .exceptions import (
     AgentSafetyError,
     ApprovalDenied,
+    ConstitutionViolation,
     DeadlineExceeded,
     ExplanationRequired,
     GuardViolation,
+    HoneytokenTripped,
     LoopDetected,
     PermissionDenied,
     QuotaExceeded,
     RateLimitExceeded,
+    RiskBudgetExceeded,
     RollbackError,
 )
 from .guards import (
     Compose,
     DenyPattern,
     Guard,
+    Honeytoken,
     MaxLength,
     PromptInjectionGuard,
     RedactPII,
@@ -76,9 +81,11 @@ from .guards import (
 )
 from .integrations import DIALECTS, ToolCall, ToolRegistry, ToolSpec, parse_tool_calls
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
+from .mcp import SafeMCP, guard_mcp
 from .permissions import PermissionSet
 from .policy import Explanation, Policy
-from .quota import Quota
+from .preview import PreviewGate
+from .quota import Quota, RiskBudget
 from .reasoning import (
     ReasoningGate,
     ReasoningRequest,
@@ -94,7 +101,7 @@ from .tracing import current_span, trace_span
 from .transaction import Transaction, async_rollback, rollback
 from .validation import validate_args
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     # the easy front door (start here)
@@ -125,6 +132,7 @@ __all__ = [
     "RedactPII",
     "SecretScanner",
     "UnicodeSanitizer",
+    "Honeytoken",
     "Compose",
     "run_guards",
     # sandbox guards
@@ -135,10 +143,14 @@ __all__ = [
     "RateLimit",
     "Deadline",
     "ConcurrencyLimit",
+    "RiskBudget",
     "LoopGuard",
-    # human-in-the-loop approval
+    # human-in-the-loop approval & previews
     "ApprovalGate",
     "ApprovalRequest",
+    "PreviewGate",
+    # constitutional rules
+    "ConstitutionGate",
     # explainability / reasoning
     "ReasoningGate",
     "ReasoningRequest",
@@ -162,6 +174,9 @@ __all__ = [
     "ToolCall",
     "parse_tool_calls",
     "DIALECTS",
+    # MCP
+    "guard_mcp",
+    "SafeMCP",
     # schema inference & validation
     "tool_schema",
     "tool_description",
@@ -184,4 +199,7 @@ __all__ = [
     "RollbackError",
     "ExplanationRequired",
     "DeadlineExceeded",
+    "ConstitutionViolation",
+    "HoneytokenTripped",
+    "RiskBudgetExceeded",
 ]

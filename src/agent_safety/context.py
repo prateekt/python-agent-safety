@@ -26,11 +26,13 @@ from typing import Iterable, Iterator, Optional, Tuple, TypeVar, Union
 
 from .approval import ApprovalGate
 from .audit import AuditSink
+from .constitution import ConstitutionGate
 from .guards import Guard
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
-from .quota import Quota
+from .preview import PreviewGate
+from .quota import Quota, RiskBudget
 from .reasoning import ReasoningGate
 
 _T = TypeVar("_T")
@@ -113,9 +115,12 @@ def safety_context(
     rate_limit: Union[RateLimit, Iterable[RateLimit], None] = None,
     deadline: Union[Deadline, Iterable[Deadline], None] = None,
     concurrency: Union[ConcurrencyLimit, Iterable[ConcurrencyLimit], None] = None,
+    risk_budget: Union[RiskBudget, Iterable[RiskBudget], None] = None,
     loop_guard: Union[LoopGuard, Iterable[LoopGuard], None] = None,
     approval: Union[ApprovalGate, Iterable[ApprovalGate], None] = None,
     reasoning: Union[ReasoningGate, Iterable[ReasoningGate], None] = None,
+    constitution: Union[ConstitutionGate, Iterable[ConstitutionGate], None] = None,
+    preview: Union[PreviewGate, Iterable[PreviewGate], None] = None,
     enforce: Optional[bool] = None,
     audit: Iterable[AuditSink] = (),
 ) -> Iterator[Policy]:
@@ -176,9 +181,12 @@ def safety_context(
             rate_limits=policy.rate_limits,
             deadlines=policy.deadlines,
             concurrency_limits=policy.concurrency_limits,
+            risk_budgets=policy.risk_budgets,
             loop_guards=policy.loop_guards,
             approvals=policy.approvals,
             reasonings=policy.reasonings,
+            constitutions=policy.constitutions,
+            previews=policy.previews,
             auditors=policy.auditors,
         )
     else:
@@ -192,9 +200,12 @@ def safety_context(
         rate_limits=_as_tuple(rate_limit, RateLimit),
         deadlines=_as_tuple(deadline, Deadline),
         concurrency_limits=_as_tuple(concurrency, ConcurrencyLimit),
+        risk_budgets=_as_tuple(risk_budget, RiskBudget),
         loop_guards=_as_tuple(loop_guard, LoopGuard),
         approvals=_as_tuple(approval, ApprovalGate),
         reasonings=_as_tuple(reasoning, ReasoningGate),
+        constitutions=_as_tuple(constitution, ConstitutionGate),
+        previews=_as_tuple(preview, PreviewGate),
         auditors=audit,
     )
     # Monitor mode can only tighten in nested blocks: a child may switch

@@ -23,18 +23,22 @@ from typing import Iterable, Optional, Tuple
 
 from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink
+from .constitution import ConstitutionGate
 from .exceptions import (
     ApprovalDenied,
+    ConstitutionViolation,
     DeadlineExceeded,
     ExplanationRequired,
     LoopDetected,
     PermissionDenied,
     RateLimitExceeded,
+    RiskBudgetExceeded,
 )
 from .guards import Guard, Stage, run_guards
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
-from .quota import Quota
+from .preview import PreviewGate
+from .quota import Quota, RiskBudget
 from .reasoning import ReasoningGate, ReasoningRequest
 from .tracing import current_span
 
@@ -64,9 +68,12 @@ class Policy:
     rate_limits: Tuple[RateLimit, ...] = ()
     deadlines: Tuple[Deadline, ...] = ()
     concurrency_limits: Tuple[ConcurrencyLimit, ...] = ()
+    risk_budgets: Tuple[RiskBudget, ...] = ()
     loop_guards: Tuple[LoopGuard, ...] = ()
     approvals: Tuple[ApprovalGate, ...] = ()
     reasonings: Tuple[ReasoningGate, ...] = ()
+    constitutions: Tuple[ConstitutionGate, ...] = ()
+    previews: Tuple[PreviewGate, ...] = ()
     auditors: Tuple[AuditSink, ...] = ()
     # When False the policy is in *monitor* (dry-run) mode: guarded tool calls
     # are not blocked, but a would-be permission denial is recorded to audit.
@@ -146,6 +153,18 @@ class Policy:
         if self.quotas:
             self.audit(AuditEvent("quota", "charge", detail=f"tokens+{n}"))
 
+    def charge_risk(self, amount: int) -> None:
+        """Charge *amount* of risk against every active :class:`RiskBudget`."""
+        if amount <= 0 or not self.risk_budgets:
+            return
+        for budget in self.risk_budgets:
+            try:
+                budget.charge(amount)
+            except RiskBudgetExceeded:
+                self.audit(AuditEvent("risk", "deny", detail=f"risk+{amount}"))
+                raise
+        self.audit(AuditEvent("risk", "charge", detail=f"risk+{amount}"))
+
     # -- loop detection ---------------------------------------------------
     def check_loop(self, tool: str, signature: str) -> None:
         """Record a call against every active :class:`LoopGuard`.
@@ -209,6 +228,79 @@ class Policy:
                 gate.reason or "approval was not granted",
             )
 
+    # -- constitutional rules (model judge) ------------------------------
+    def check_constitution(self, request: ApprovalRequest) -> None:
+        """Have each matching :class:`ConstitutionGate` judge *request* (sync).
+
+        Raises :class:`~agent_safety.exceptions.ConstitutionViolation` if any rule
+        is judged broken, or ``RuntimeError`` if a matching judge is async.
+        """
+        for gate in self.constitutions:
+            if not gate.covers(request.capability):
+                continue
+            if gate.is_async:
+                raise RuntimeError(
+                    f"{gate.name} has an async judge; the tool requiring "
+                    f"{request.capability!r} must be a @guarded_async_tool"
+                )
+            for rule in gate.rules:
+                self._decide_constitution(request, rule, bool(gate.judge(request, rule)))
+
+    async def check_constitution_async(self, request: ApprovalRequest) -> None:
+        """Async counterpart of :meth:`check_constitution`; awaits async judges."""
+        for gate in self.constitutions:
+            if not gate.covers(request.capability):
+                continue
+            for rule in gate.rules:
+                verdict = gate.judge(request, rule)
+                if inspect.isawaitable(verdict):
+                    verdict = await verdict
+                self._decide_constitution(request, rule, bool(verdict))
+
+    def _decide_constitution(self, request: ApprovalRequest, rule: str, ok: bool) -> None:
+        if ok:
+            self.audit(AuditEvent("constitution", "allow", capability=request.capability))
+        else:
+            self.audit(AuditEvent(
+                "constitution", "deny", capability=request.capability, detail=rule,
+            ))
+            raise ConstitutionViolation(request.capability, request.tool, rule)
+
+    # -- action previews -------------------------------------------------
+    def requires_preview(self, capability: str) -> bool:
+        """Whether any active :class:`PreviewGate` gates *capability*."""
+        return any(gate.covers(capability) for gate in self.previews)
+
+    def check_preview(self, request: ApprovalRequest, preview: str) -> None:
+        """Show *preview* to each matching approver (sync); raise if rejected."""
+        for gate in self.previews:
+            if not gate.covers(request.capability):
+                continue
+            if gate.is_async:
+                raise RuntimeError(
+                    f"{gate.name} has an async approver; the tool requiring "
+                    f"{request.capability!r} must be a @guarded_async_tool"
+                )
+            self._decide_preview(request, preview, bool(gate.approver(preview, request)))
+
+    async def check_preview_async(self, request: ApprovalRequest, preview: str) -> None:
+        """Async counterpart of :meth:`check_preview`; awaits async approvers."""
+        for gate in self.previews:
+            if not gate.covers(request.capability):
+                continue
+            decision = gate.approver(preview, request)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            self._decide_preview(request, preview, bool(decision))
+
+    def _decide_preview(self, request: ApprovalRequest, preview: str, ok: bool) -> None:
+        self.audit(AuditEvent(
+            "preview", "allow" if ok else "deny",
+            capability=request.capability, detail=preview[:200],
+        ))
+        if not ok:
+            raise ApprovalDenied(request.capability, request.tool, "rejected at preview")
+
     # -- reasoning (explainability) --------------------------------------
     def requires_reasoning(self, capability: str) -> bool:
         """Whether any active :class:`ReasoningGate` gates *capability*."""
@@ -265,9 +357,12 @@ class Policy:
         rate_limits: Iterable[RateLimit] = (),
         deadlines: Iterable[Deadline] = (),
         concurrency_limits: Iterable[ConcurrencyLimit] = (),
+        risk_budgets: Iterable[RiskBudget] = (),
         loop_guards: Iterable[LoopGuard] = (),
         approvals: Iterable[ApprovalGate] = (),
         reasonings: Iterable[ReasoningGate] = (),
+        constitutions: Iterable[ConstitutionGate] = (),
+        previews: Iterable[PreviewGate] = (),
         auditors: Iterable[AuditSink] = (),
     ) -> "Policy":
         """Return a stricter child policy.
@@ -291,8 +386,11 @@ class Policy:
             rate_limits=self.rate_limits + tuple(rate_limits),
             deadlines=self.deadlines + tuple(deadlines),
             concurrency_limits=self.concurrency_limits + tuple(concurrency_limits),
+            risk_budgets=self.risk_budgets + tuple(risk_budgets),
             loop_guards=self.loop_guards + tuple(loop_guards),
             approvals=self.approvals + tuple(approvals),
             reasonings=self.reasonings + tuple(reasonings),
+            constitutions=self.constitutions + tuple(constitutions),
+            previews=self.previews + tuple(previews),
             auditors=self.auditors + tuple(auditors),
         )

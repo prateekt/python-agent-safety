@@ -129,6 +129,7 @@ Composable `check(value, stage)` objects that pass, **sanitize**, or block:
 | `RedactPII()` | replace emails / cards / SSNs / API keys with `[REDACTED:…]` |
 | `SecretScanner()` | detect provider credentials (AWS/GitHub/Slack/Google keys, JWTs, PEM keys) and redact or block |
 | `UnicodeSanitizer()` | strip invisible / bidi / tag characters used for hidden prompt injection |
+| `Honeytoken(token)` | trip if a planted canary secret appears in a value (exfiltration tripwire) |
 | `PathBoundary(root)` | confine a filesystem path to `root` — block `../` traversal and symlink escapes |
 | `NetworkAllowlist(hosts=…)` | confine a URL to approved hosts/schemes; block private-IP / `localhost` targets (SSRF) |
 | `Compose([...])` | chain guards, threading the transformed value |
@@ -159,6 +160,7 @@ tighter but never looser):
 | `RateLimit(per_second=5)` | a **sliding-window** burst cap (also `per_minute=`, or `max_calls=/per_seconds=`) |
 | `Deadline(seconds=30)` | a **wall-clock** budget, timed from the first action |
 | `ConcurrencyLimit(4)` | most tool calls running **at once** — share one across agents to cap them together |
+| `RiskBudget(20)` | spend **danger**, not calls — weight tools with `@tool(..., risk=N)` and cap the total |
 | `LoopGuard(max_identical=3)` | a **circuit breaker** for an agent stuck repeating one tool with the same args |
 
 ```python
@@ -273,6 +275,41 @@ tried. Wrap work in `trace_span("plan")` and each event is stamped with the dott
 span path, turning the flat log into a causal tree; drop in a `MetricsSink` to get
 running counts (`m.counts["permission/deny"]`) instead of storing every event.
 
+### 10. Constitutional rules, previews & honeytokens
+
+Three checks that go past static permissions:
+
+```python
+with safely(
+    allow="*",
+    rule="never email a customer without prior consent",  # judged by a model
+    judge=my_model,                                        # judge(action, rule) -> ok?
+    preview=approve_fn,                                    # see a tool's preview, then y/n
+    honeytoken="sk-CANARY-9f3x",                           # planted secret = exfil tripwire
+):
+    ...
+```
+
+- **`rule=` + `judge=`** — state a safety rule in plain English; a model (any
+  callable, provider-agnostic) judges each matching call and a "no" raises
+  `ConstitutionViolation`. It's probabilistic, so keep the hard `allow=`/limits
+  underneath as the real backstop.
+- **`preview=`** — a tool with a `@tool(..., preview=fn)` describes what it would
+  do; the approver sees that preview and approves or rejects *before* it runs.
+- **`honeytoken=`** — plant a fake secret an attacker would grab; if it ever shows
+  up in an outbound call, `HoneytokenTripped` fires — strong evidence of a hijack.
+
+**MCP.** `guard_mcp(session)` wraps any Model Context Protocol session so every
+remote tool call runs through the active `safely(...)` policy — permission,
+budgets, approval, constitutional rules, loop/concurrency, input guards, and audit
+— with no MCP SDK dependency:
+
+```python
+safe = guard_mcp(session)
+with safely(allow=["search", "fs.read"], calls=20, hide_secrets=True):
+    result = await safe.call_tool("search", {"q": "agent safety"})
+```
+
 ### `@guarded_tool` / `@guarded_async_tool`
 
 Decorate the functions an agent may call. Every invocation is quota-charged,
@@ -381,7 +418,7 @@ python examples/multi_agent.py     # two agents, different powers, a shared conc
 python examples/quickstart.py      # narrated single-provider walkthrough
 python examples/hardening.py       # sandbox + limits + approval + reasoning + rollback
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
-python -m pytest                   # 212 tests, standard library only
+python -m pytest                   # 234 tests, standard library only
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
@@ -396,11 +433,14 @@ src/agent_safety/
   permissions.py   PermissionSet — capability allow/deny + intersect (+ to_dict/from_dict)
   guards.py        Stage, Guard protocol, content + security guards (Secret/Unicode)
   sandbox.py       PathBoundary, NetworkAllowlist — filesystem/SSRF resource guards
-  quota.py         Quota — call/token budgets
+  quota.py         Quota (call/token budgets) + RiskBudget (per-action risk)
   limits.py        RateLimit + Deadline + ConcurrencyLimit + LoopGuard
   approval.py      ApprovalGate / ApprovalRequest — human-in-the-loop gating
+  preview.py       PreviewGate — approve a tool's "what would this do?" preview
+  constitution.py  ConstitutionGate — plain-English rules judged by a model
   reasoning.py     ReasoningGate + thought_trace / record_thought — explainability
   transaction.py   rollback() / async_rollback() — compensating (saga) transactions
+  mcp.py           guard_mcp — run MCP tool calls through the active policy
   tracing.py       trace_span() / current_span() — causal span paths on audit events
   audit.py         AuditEvent, ListSink / JsonlSink / MetricsSink
   policy.py        Policy — the immutable bundle of all of the above; narrow(), explain()
@@ -410,8 +450,9 @@ src/agent_safety/
   validation.py    validate_args — check tool inputs against the declared schema
   integrations.py  ToolRegistry — schema dialects, neutral dispatch, parse_tool_calls
   exceptions.py    AgentSafetyError + PermissionDenied / GuardViolation / QuotaExceeded /
-                   RateLimitExceeded / DeadlineExceeded / LoopDetected / ApprovalDenied /
-                   ExplanationRequired / RollbackError
+                   RateLimitExceeded / DeadlineExceeded / RiskBudgetExceeded / LoopDetected /
+                   ApprovalDenied / ExplanationRequired / ConstitutionViolation /
+                   HoneytokenTripped / RollbackError
   py.typed         PEP 561 marker — ships inline type information to consumers
 ```
 
