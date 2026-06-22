@@ -16,9 +16,52 @@ four with constructs Python developers already know — a `with` block, a
 decorator, and small composable objects — instead of a sprawling config format.
 
 It is **pure standard library** (no dependencies) and **provider-agnostic**: the
-same guarded tools and the same `safety_context` govern a **Claude, OpenAI, or
-Gemini** agent unchanged. The only per-provider difference — tool-schema shape
-and how each SDK reports a tool call — is absorbed by `ToolRegistry`.
+same guarded tools govern a **Claude, OpenAI, or Gemini** agent unchanged.
+
+## Start here
+
+Two ideas. Mark a function with `@tool`, then run it inside a `safely(...)` block
+that says, in plain words, what's allowed:
+
+```python
+from agent_safety import tool, safely
+
+@tool
+def read_file(path):
+    return open(path).read()
+
+with safely(allow="read_file", calls=10, hide_secrets=True):
+    text = read_file("notes.txt")   # allowed, budget-counted, secrets scrubbed
+    # anything you didn't allow simply can't run here
+```
+
+Every option is a plain keyword — reach for one when you need it, ignore the rest:
+
+```python
+with safely(
+    allow=["read_file", "search"],  # what the code may do  (or allow="everything")
+    deny="delete",                  # ...except this (deny always wins)
+    calls=25,                       # most tool calls
+    per_second=5,                   # speed limit
+    seconds=30,                     # time budget
+    hide_secrets=True,              # scrub emails / API keys from results
+    block_injections=True,          # reject "ignore previous instructions" inputs
+    no_repeats=3,                   # stop a runaway loop
+    ask=True,                       # ask you (y/n) before each action
+    explain=True,                   # require a rationale="..." with each call
+    log=True,                       # print every decision
+):
+    ...
+```
+
+That's the whole beginner surface. When you outgrow it, every keyword maps to a
+real object you can use directly — read on.
+
+## The full version
+
+Under the hood `safely` builds the same objects you can wire by hand for full
+control: a `with safety_context(...)`, a `PermissionSet`, guard objects, `Quota`,
+and so on. The same per-provider glue is absorbed by `ToolRegistry`.
 
 ```python
 from agent_safety import (
@@ -305,10 +348,11 @@ no matter which model is driving.
 ```bash
 cd python-agent-safety
 pip install -e ".[dev]"
+python examples/easy.py            # the simplest possible intro (@tool + safely)
 python examples/quickstart.py      # narrated single-provider walkthrough
 python examples/hardening.py       # sandbox + limits + approval + reasoning + rollback
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
-python -m pytest                   # 185 tests, standard library only
+python -m pytest                   # 201 tests, standard library only
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
@@ -319,6 +363,7 @@ GEMINI_API_KEY=... python -m pytest tests/test_gemini_live.py -v
 
 ```
 src/agent_safety/
+  easy.py          tool / safely — the beginner front door (plain-keyword facade)
   permissions.py   PermissionSet — capability allow/deny + intersect (+ to_dict/from_dict)
   guards.py        Stage, Guard protocol, content + security guards (Secret/Unicode)
   sandbox.py       PathBoundary, NetworkAllowlist — filesystem/SSRF resource guards

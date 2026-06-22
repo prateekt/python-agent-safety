@@ -39,6 +39,15 @@ package ships a `py.typed` marker, so the public surface must stay fully typed.
 We keep the classic `typing` spellings (`Tuple`, `Optional`, …) for clean 3.9
 support — the pyupgrade (`UP`) ruleset is intentionally off.
 
+## The easy facade (`easy.py`)
+
+`tool` and `safely(...)` are a **thin, beginner-facing wrapper** over the power
+API — `safely` just translates plain keywords (`allow=`, `calls=`, `hide_secrets=`
+…) into the real objects (`PermissionSet`, `Quota`, guards, gates) and calls
+`safety_context`. Keep it that way: a new keyword should map to existing
+constructs, never add enforcement logic of its own. Engine behavior belongs in the
+underlying module; `easy.py` only makes it approachable.
+
 ## Adding a guard
 
 Implement the `Guard` protocol — an object with a `name` attribute and a
