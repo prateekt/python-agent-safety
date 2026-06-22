@@ -36,7 +36,7 @@ Quick start::
 from __future__ import annotations
 
 from .approval import ApprovalGate, ApprovalRequest
-from .audit import AuditEvent, AuditSink, JsonlSink, ListSink
+from .audit import AuditEvent, AuditSink, JsonlSink, ListSink, MetricsSink
 from .context import (
     charge_call,
     charge_tokens,
@@ -52,6 +52,8 @@ from .decorators import guarded_async_tool, guarded_tool
 from .exceptions import (
     AgentSafetyError,
     ApprovalDenied,
+    DeadlineExceeded,
+    ExplanationRequired,
     GuardViolation,
     LoopDetected,
     PermissionDenied,
@@ -66,19 +68,32 @@ from .guards import (
     MaxLength,
     PromptInjectionGuard,
     RedactPII,
+    SecretScanner,
     Stage,
+    UnicodeSanitizer,
     run_guards,
 )
-from .integrations import DIALECTS, ToolRegistry, ToolSpec
-from .limits import LoopGuard, RateLimit
+from .integrations import DIALECTS, ToolCall, ToolRegistry, ToolSpec, parse_tool_calls
+from .limits import Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
-from .policy import Policy
+from .policy import Explanation, Policy
 from .quota import Quota
+from .reasoning import (
+    ReasoningGate,
+    ReasoningRequest,
+    Thought,
+    ThoughtTrace,
+    current_trace,
+    record_thought,
+    thought_trace,
+)
 from .sandbox import NetworkAllowlist, PathBoundary
 from .schema import Param, tool_description, tool_schema
+from .tracing import current_span, trace_span
 from .transaction import Transaction, async_rollback, rollback
+from .validation import validate_args
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # context / ``with`` construct
@@ -104,6 +119,8 @@ __all__ = [
     "DenyPattern",
     "PromptInjectionGuard",
     "RedactPII",
+    "SecretScanner",
+    "UnicodeSanitizer",
     "Compose",
     "run_guards",
     # sandbox guards
@@ -112,10 +129,23 @@ __all__ = [
     # quota & limits
     "Quota",
     "RateLimit",
+    "Deadline",
     "LoopGuard",
     # human-in-the-loop approval
     "ApprovalGate",
     "ApprovalRequest",
+    # explainability / reasoning
+    "ReasoningGate",
+    "ReasoningRequest",
+    "thought_trace",
+    "record_thought",
+    "current_trace",
+    "ThoughtTrace",
+    "Thought",
+    # tracing & metrics
+    "trace_span",
+    "current_span",
+    "MetricsSink",
     # audit
     "AuditEvent",
     "AuditSink",
@@ -124,15 +154,20 @@ __all__ = [
     # provider integrations
     "ToolRegistry",
     "ToolSpec",
+    "ToolCall",
+    "parse_tool_calls",
     "DIALECTS",
-    # schema inference
+    # schema inference & validation
     "tool_schema",
     "tool_description",
     "Param",
+    "validate_args",
     # transactional rollback
     "rollback",
     "async_rollback",
     "Transaction",
+    # introspection
+    "Explanation",
     # exceptions
     "AgentSafetyError",
     "PermissionDenied",
@@ -142,4 +177,6 @@ __all__ = [
     "LoopDetected",
     "ApprovalDenied",
     "RollbackError",
+    "ExplanationRequired",
+    "DeadlineExceeded",
 ]

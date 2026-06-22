@@ -23,11 +23,33 @@ from typing import Iterable, Optional, Tuple
 
 from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink
-from .exceptions import ApprovalDenied, LoopDetected, PermissionDenied, RateLimitExceeded
+from .exceptions import (
+    ApprovalDenied,
+    DeadlineExceeded,
+    ExplanationRequired,
+    LoopDetected,
+    PermissionDenied,
+    RateLimitExceeded,
+)
 from .guards import Guard, Stage, run_guards
-from .limits import LoopGuard, RateLimit
+from .limits import Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .quota import Quota
+from .reasoning import ReasoningGate, ReasoningRequest
+from .tracing import current_span
+
+
+@dataclass(frozen=True)
+class Explanation:
+    """Why the active policy allows or denies a capability."""
+
+    capability: str
+    allowed: bool
+    reason: str
+
+    def __str__(self) -> str:
+        verb = "allowed" if self.allowed else "denied"
+        return f"{self.capability!r} is {verb}: {self.reason}"
 
 
 @dataclass(frozen=True)
@@ -40,12 +62,19 @@ class Policy:
     output_guards: Tuple[Guard, ...] = ()
     quotas: Tuple[Quota, ...] = ()
     rate_limits: Tuple[RateLimit, ...] = ()
+    deadlines: Tuple[Deadline, ...] = ()
     loop_guards: Tuple[LoopGuard, ...] = ()
     approvals: Tuple[ApprovalGate, ...] = ()
+    reasonings: Tuple[ReasoningGate, ...] = ()
     auditors: Tuple[AuditSink, ...] = ()
 
     # -- audit ------------------------------------------------------------
     def audit(self, event: AuditEvent) -> None:
+        # Stamp the active trace span unless the event already carries one.
+        if event.span is None:
+            span = current_span()
+            if span is not None:
+                event = replace(event, span=span)
         for sink in self.auditors:
             sink(event)
 
@@ -78,7 +107,7 @@ class Policy:
             self.audit(AuditEvent("guard", decision, stage=stage.value))
         return result
 
-    # -- quotas & rate limits --------------------------------------------
+    # -- quotas, rate limits & deadlines ---------------------------------
     def charge_call(self, n: int = 1) -> None:
         for quota in self.quotas:
             quota.charge_call(n)
@@ -88,6 +117,12 @@ class Policy:
                     limiter.charge()
             except RateLimitExceeded:
                 self.audit(AuditEvent("rate_limit", "deny", detail=limiter.name))
+                raise
+        for deadline in self.deadlines:
+            try:
+                deadline.charge()
+            except DeadlineExceeded:
+                self.audit(AuditEvent("deadline", "deny", detail=deadline.name))
                 raise
         if self.quotas or self.rate_limits:
             self.audit(AuditEvent("quota", "charge", detail=f"calls+{n}"))
@@ -161,6 +196,50 @@ class Policy:
                 gate.reason or "approval was not granted",
             )
 
+    # -- reasoning (explainability) --------------------------------------
+    def requires_reasoning(self, capability: str) -> bool:
+        """Whether any active :class:`ReasoningGate` gates *capability*."""
+        return any(gate.covers(capability) for gate in self.reasonings)
+
+    def check_reasoning(self, request: ReasoningRequest, rationale: Optional[str]) -> None:
+        """Require an adequate rationale for *request*, recording it to audit.
+
+        Raises :class:`~agent_safety.exceptions.ExplanationRequired` if a matching
+        gate is unsatisfied.
+        """
+        for gate in self.reasonings:
+            if not gate.covers(request.capability):
+                continue
+            problem = gate.evaluate(rationale, request)
+            if problem is not None:
+                self.audit(AuditEvent(
+                    "reasoning", "missing", capability=request.capability, detail=problem,
+                ))
+                raise ExplanationRequired(request.capability, request.tool, problem)
+            self.audit(AuditEvent(
+                "reasoning", "recorded", capability=request.capability,
+                detail=(rationale or "").strip()[:200],
+            ))
+
+    # -- introspection ----------------------------------------------------
+    def explain(self, capability: str) -> Explanation:
+        """Explain why *capability* is allowed or denied, citing the pattern.
+
+        A debugging aid for least-privilege: it reports the winning deny pattern,
+        the matching allow pattern, or that nothing granted the capability.
+        """
+        from fnmatch import fnmatchcase
+
+        cap = capability.strip()
+        perms = self.permissions
+        denied = [p for p in perms.deny if fnmatchcase(cap, p)]
+        if denied:
+            return Explanation(capability, False, f"denied by pattern {sorted(denied)[0]!r}")
+        allowed = [p for p in perms.allow if fnmatchcase(cap, p)]
+        if allowed:
+            return Explanation(capability, True, f"allowed by pattern {sorted(allowed)[0]!r}")
+        return Explanation(capability, False, "no allow pattern matches (default-deny)")
+
     # -- narrowing (one-way ratchet) -------------------------------------
     def narrow(
         self,
@@ -171,17 +250,19 @@ class Policy:
         output_guards: Iterable[Guard] = (),
         quotas: Iterable[Quota] = (),
         rate_limits: Iterable[RateLimit] = (),
+        deadlines: Iterable[Deadline] = (),
         loop_guards: Iterable[LoopGuard] = (),
         approvals: Iterable[ApprovalGate] = (),
+        reasonings: Iterable[ReasoningGate] = (),
         auditors: Iterable[AuditSink] = (),
     ) -> "Policy":
         """Return a stricter child policy.
 
         Permissions are *intersected* with ``self`` (capabilities can only be
-        removed); guards, quotas, rate limits, loop guards, approval gates, and
-        audit sinks are all appended to the existing ones. Every field can only
-        add restrictions, never remove them — the one-way ratchet the ``with``
-        context relies on.
+        removed); guards, quotas, rate limits, deadlines, loop guards, approval
+        gates, reasoning gates, and audit sinks are all appended to the existing
+        ones. Every field can only add restrictions, never remove them — the
+        one-way ratchet the ``with`` context relies on.
         """
         new_perms = self.permissions
         if permissions is not None:
@@ -194,7 +275,9 @@ class Policy:
             output_guards=self.output_guards + tuple(output_guards),
             quotas=self.quotas + tuple(quotas),
             rate_limits=self.rate_limits + tuple(rate_limits),
+            deadlines=self.deadlines + tuple(deadlines),
             loop_guards=self.loop_guards + tuple(loop_guards),
             approvals=self.approvals + tuple(approvals),
+            reasonings=self.reasonings + tuple(reasonings),
             auditors=self.auditors + tuple(auditors),
         )

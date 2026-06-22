@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import IO, Any, Callable, Dict, List, Optional
 
@@ -30,6 +31,7 @@ class AuditEvent:
     detail: str = ""     # human-readable specifics
     capability: Optional[str] = None
     stage: Optional[str] = None
+    span: Optional[str] = None   # active trace_span() path, stamped by Policy.audit
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -43,6 +45,8 @@ class AuditEvent:
             d["capability"] = self.capability
         if self.stage is not None:
             d["stage"] = self.stage
+        if self.span is not None:
+            d["span"] = self.span
         return d
 
 
@@ -65,3 +69,24 @@ class JsonlSink:
     def __call__(self, event: AuditEvent) -> None:
         self.stream.write(json.dumps(event.to_dict()) + "\n")
         self.stream.flush()
+
+
+class MetricsSink:
+    """Aggregate events into counts keyed by ``"action/decision"``.
+
+    A drop-in sink for dashboards/alerting: instead of storing every event it
+    keeps a running tally, so you can answer "how many permission denials,
+    redactions, or quota charges happened?" cheaply.
+    """
+
+    def __init__(self) -> None:
+        self.counts: "Counter[str]" = Counter()
+
+    def __call__(self, event: AuditEvent) -> None:
+        self.counts[f"{event.action}/{event.decision}"] += 1
+
+    def total(self, action: Optional[str] = None) -> int:
+        """Total events, or just those for *action* (e.g. ``"permission"``)."""
+        if action is None:
+            return sum(self.counts.values())
+        return sum(n for k, n in self.counts.items() if k.split("/", 1)[0] == action)

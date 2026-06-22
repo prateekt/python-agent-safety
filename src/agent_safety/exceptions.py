@@ -98,6 +98,43 @@ class RateLimitExceeded(AgentSafetyError):
         )
 
 
+class ExplanationRequired(AgentSafetyError):
+    """Raised when an agent invokes a gated tool without an adequate rationale.
+
+    A :class:`ReasoningGate` requires the agent to justify a sensitive action (a
+    ``rationale=`` argument) before it runs. A missing, empty, or rejected
+    rationale raises this — which, like every other safety block, is reported
+    back to the model so it can retry *with* an explanation.
+
+    Attributes:
+        capability: The capability whose call required a rationale.
+        tool: The tool the agent tried to invoke.
+        reason: Why the rationale was inadequate.
+    """
+
+    def __init__(self, capability: str, tool: str, reason: str = "a rationale is required"):
+        self.capability = capability
+        self.tool = tool
+        self.reason = reason
+        super().__init__(f"call to {tool!r} ({capability!r}) needs a rationale: {reason}")
+
+
+class DeadlineExceeded(AgentSafetyError):
+    """Raised when a context's wall-clock :class:`Deadline` has elapsed.
+
+    Attributes:
+        budget: The deadline in seconds.
+        elapsed: How long had elapsed when the call was attempted.
+    """
+
+    def __init__(self, budget: float, elapsed: float):
+        self.budget = budget
+        self.elapsed = elapsed
+        super().__init__(
+            f"deadline exceeded: {elapsed:.3g}s elapsed of a {budget:g}s budget"
+        )
+
+
 class RollbackError(AgentSafetyError):
     """Raised when one or more compensating actions fail during an explicit abort.
 

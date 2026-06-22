@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
-from typing import FrozenSet, Iterable
+from typing import Any, FrozenSet, Iterable
 
 
 def _freeze(patterns: Iterable[str]) -> FrozenSet[str]:
@@ -86,6 +86,20 @@ class PermissionSet:
     def with_denied(self, *capabilities: str) -> "PermissionSet":
         """Return a copy that additionally denies *capabilities* (only narrows)."""
         return PermissionSet(allow=self.allow, deny=self.deny | _freeze(capabilities))
+
+    # -- serialization ----------------------------------------------------
+    def to_dict(self) -> "dict[str, list[str]]":
+        """A JSON-safe ``{"allow": [...], "deny": [...]}`` representation."""
+        return {"allow": sorted(self.allow), "deny": sorted(self.deny)}
+
+    @classmethod
+    def from_dict(cls, data: "dict[str, Any]") -> "PermissionSet":
+        """Rebuild a :class:`PermissionSet` from :meth:`to_dict` output.
+
+        Lets ops define a capability policy declaratively (JSON/TOML/YAML) and
+        load it, without the core needing a config format of its own.
+        """
+        return cls(allow=_freeze(data.get("allow", ())), deny=_freeze(data.get("deny", ())))
 
     # -- internals --------------------------------------------------------
     def _allows_pattern(self, pattern: str) -> bool:

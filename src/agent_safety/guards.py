@@ -152,6 +152,89 @@ class RedactPII:
         return text
 
 
+# Credential formats with a recognizable shape. (label, compiled regex).
+_SECRET_PATTERNS = [
+    ("AWS_ACCESS_KEY", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("GITHUB_TOKEN", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("SLACK_TOKEN", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
+    ("GOOGLE_API_KEY", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("OPENAI_KEY", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b")),
+    ("JWT", re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b")),
+    ("PRIVATE_KEY", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----")),
+]
+
+
+class SecretScanner:
+    """Detect well-known credential formats and redact (or block) them.
+
+    Where :class:`RedactPII` targets personal data with a generic key heuristic,
+    this targets *provider-specific* secret shapes (AWS keys, GitHub/Slack tokens,
+    Google API keys, JWTs, PEM private keys). By default it **redacts** (so an
+    agent can't echo a leaked credential back); pass ``block=True`` to refuse the
+    value outright with a :class:`GuardViolation`.
+    """
+
+    def __init__(self, *, block: bool = False, placeholder: str = "[REDACTED:{label}]"):
+        self.block = block
+        self.placeholder = placeholder
+        self.name = "secret_scanner"
+
+    def check(self, value: object, stage: Stage) -> object:
+        if not isinstance(value, str):
+            return value
+        text = value
+        for label, regex in _SECRET_PATTERNS:
+            if regex.search(text):
+                if self.block:
+                    raise GuardViolation(
+                        self.name, stage.value,
+                        f"value contains a {label} credential", value=value,
+                    )
+                text = regex.sub(self.placeholder.format(label=label), text)
+        return text
+
+
+# Characters with no visible glyph that can smuggle hidden instructions past a
+# human reviewer: zero-width spaces/joiners, BOM, bidirectional overrides, and
+# the Unicode "tag" block used for invisible ASCII payloads.
+_INVISIBLE = (
+    "​‌‍⁠﻿"          # zero-width + BOM
+    "‪‫‬‭‮"          # bidi embeddings / overrides
+    "⁦⁧⁨⁩"                # bidi isolates
+)
+_TAG_RANGE = range(0xE0000, 0xE0080)
+
+
+class UnicodeSanitizer:
+    """Strip invisible / control characters used for hidden prompt injection.
+
+    Zero-width characters, bidirectional overrides, and Unicode tag characters
+    render as nothing (or reorder text) for a human but are seen by the model —
+    a channel for instructions a reviewer can't see. This guard removes them by
+    default; pass ``block=True`` to reject any value that contains one.
+    """
+
+    def __init__(self, *, block: bool = False):
+        self.block = block
+        self.name = "unicode_sanitizer"
+
+    @staticmethod
+    def _is_suspect(ch: str) -> bool:
+        return ch in _INVISIBLE or ord(ch) in _TAG_RANGE
+
+    def check(self, value: object, stage: Stage) -> object:
+        if not isinstance(value, str):
+            return value
+        if not any(self._is_suspect(ch) for ch in value):
+            return value
+        if self.block:
+            raise GuardViolation(
+                self.name, stage.value,
+                "value contains invisible/control characters", value=value,
+            )
+        return "".join(ch for ch in value if not self._is_suspect(ch))
+
+
 class Compose:
     """Run several guards in order, threading the (possibly transformed) value."""
 

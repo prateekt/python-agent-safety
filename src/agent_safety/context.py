@@ -26,10 +26,11 @@ from typing import Iterable, Iterator, Optional, Tuple, TypeVar, Union
 from .approval import ApprovalGate
 from .audit import AuditSink
 from .guards import Guard
-from .limits import LoopGuard, RateLimit
+from .limits import Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
 from .quota import Quota
+from .reasoning import ReasoningGate
 
 _T = TypeVar("_T")
 
@@ -109,8 +110,10 @@ def safety_context(
     output_guards: Iterable[Guard] = (),
     quota: Optional[Quota] = None,
     rate_limit: Union[RateLimit, Iterable[RateLimit], None] = None,
+    deadline: Union[Deadline, Iterable[Deadline], None] = None,
     loop_guard: Union[LoopGuard, Iterable[LoopGuard], None] = None,
     approval: Union[ApprovalGate, Iterable[ApprovalGate], None] = None,
+    reasoning: Union[ReasoningGate, Iterable[ReasoningGate], None] = None,
     audit: Iterable[AuditSink] = (),
 ) -> Iterator[Policy]:
     """Scope a narrowed safety policy to a ``with`` block.
@@ -126,10 +129,13 @@ def safety_context(
             duration of the block.
         rate_limit: One or more :class:`RateLimit` sliding-window caps, charged
             on every guarded call alongside any enclosing limits.
+        deadline: One or more :class:`Deadline` wall-clock budgets.
         loop_guard: One or more :class:`LoopGuard` circuit breakers that trip on
             repeated identical tool calls.
         approval: One or more :class:`ApprovalGate` human-in-the-loop gates that
             must approve a matching capability before its tool runs.
+        reasoning: One or more :class:`ReasoningGate` gates that require the agent
+            to supply a ``rationale=`` justifying a matching capability's call.
         audit: Audit sinks that receive every safety decision made inside the block.
 
     Yields:
@@ -152,8 +158,10 @@ def safety_context(
             output_guards=policy.output_guards,
             quotas=policy.quotas,
             rate_limits=policy.rate_limits,
+            deadlines=policy.deadlines,
             loop_guards=policy.loop_guards,
             approvals=policy.approvals,
+            reasonings=policy.reasonings,
             auditors=policy.auditors,
         )
     else:
@@ -165,8 +173,10 @@ def safety_context(
         output_guards=output_guards,
         quotas=(quota,) if quota is not None else (),
         rate_limits=_as_tuple(rate_limit, RateLimit),
+        deadlines=_as_tuple(deadline, Deadline),
         loop_guards=_as_tuple(loop_guard, LoopGuard),
         approvals=_as_tuple(approval, ApprovalGate),
+        reasonings=_as_tuple(reasoning, ReasoningGate),
         auditors=audit,
     )
     token = _current.set(effective)

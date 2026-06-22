@@ -79,6 +79,8 @@ Composable `check(value, stage)` objects that pass, **sanitize**, or block:
 | `DenyPattern(regex)` | block values matching a banned pattern |
 | `PromptInjectionGuard()` | tripwire for "ignore previous instructions"-style attacks |
 | `RedactPII()` | replace emails / cards / SSNs / API keys with `[REDACTED:…]` |
+| `SecretScanner()` | detect provider credentials (AWS/GitHub/Slack/Google keys, JWTs, PEM keys) and redact or block |
+| `UnicodeSanitizer()` | strip invisible / bidi / tag characters used for hidden prompt injection |
 | `PathBoundary(root)` | confine a filesystem path to `root` — block `../` traversal and symlink escapes |
 | `NetworkAllowlist(hosts=…)` | confine a URL to approved hosts/schemes; block private-IP / `localhost` targets (SSRF) |
 | `Compose([...])` | chain guards, threading the transformed value |
@@ -97,16 +99,17 @@ def fetch(url: str) -> str:               # http://169.254.169.254/ -> GuardViol
     ...
 ```
 
-### 4. Budgets: quotas, rate limits, loop detection
+### 4. Budgets: quotas, rate limits, deadlines, loop detection
 
-Three ways to bound *how much* and *how fast* an agent acts, all charged on every
-guarded call alongside the ones already in scope (so an inner limit can be
+Ways to bound *how much*, *how fast*, and *how long* an agent acts, all charged on
+every guarded call alongside the ones already in scope (so an inner limit can be
 tighter but never looser):
 
 | Construct | Bounds |
 |---|---|
 | `Quota(max_calls=…, max_tokens=…)` | the **total** calls/tokens an agent may spend |
 | `RateLimit(per_second=5)` | a **sliding-window** burst cap (also `per_minute=`, or `max_calls=/per_seconds=`) |
+| `Deadline(seconds=30)` | a **wall-clock** budget, timed from the first action |
 | `LoopGuard(max_identical=3)` | a **circuit breaker** for an agent stuck repeating one tool with the same args |
 
 ```python
@@ -114,7 +117,8 @@ with safety_context(
     PermissionSet.of("*"),
     quota=Quota(max_calls=200, max_tokens=500_000),
     rate_limit=RateLimit(per_second=5),     # 6th call in a second -> RateLimitExceeded
-    loop_guard=LoopGuard(max_identical=3),  # 4th identical call  -> LoopDetected
+    deadline=Deadline(seconds=30),          # past 30s of work      -> DeadlineExceeded
+    loop_guard=LoopGuard(max_identical=3),  # 4th identical call    -> LoopDetected
 ):
     ...
 ```
@@ -143,7 +147,31 @@ with safety_context(
     read_file("notes.txt")   # not gated -> runs straight through
 ```
 
-### 6. Transactional rollback — undo on failure
+### 6. Explainability: make the agent say *why*
+
+Least privilege limits *what* an agent may do; a `ReasoningGate` makes it justify
+*why* before it does it. For matching capabilities the agent must supply a
+`rationale="…"` with the call; the rationale is validated, recorded to the audit
+trail, and handed to any approver — then stripped before the tool runs. A missing
+or thin rationale raises `ExplanationRequired`, reported back to the model so it
+retries *with* an explanation.
+
+```python
+with safety_context(
+    PermissionSet.of("shell.exec"),
+    reasoning=ReasoningGate(require=["shell.exec"], min_length=20),
+):
+    run_shell("rm build/*", rationale="Clearing stale build artifacts before a clean rebuild")
+    # run_shell("rm build/*")  ->  ExplanationRequired
+```
+
+Separately, `thought_trace()` + `record_thought("…")` let the agent narrate its
+reasoning inside a block; each step is timestamped onto the audit trail and
+stamped with the active `trace_span`, giving a replayable record of *stated intent*
+alongside the decisions it triggered. A validator (`ReasoningGate(..., validator=fn)`)
+can even hold the rationale to a quality bar — e.g. an LLM-as-judge.
+
+### 7. Transactional rollback — undo on failure
 
 Least privilege limits what an agent *can* do; rollback handles the irreversible
 things it *did* do when a later step fails. `rollback()` is a `with` block that
@@ -166,11 +194,14 @@ audited without stopping the rest, and the body's original exception is never
 masked. `tx.commit()` is an explicit point-of-no-return; `async_rollback()` awaits
 coroutine compensations. Every begin/commit/compensation hits the same audit sinks.
 
-### 7. Audit
+### 8. Audit, tracing & metrics
 
-Audit sinks (`ListSink`, `JsonlSink`, or any callable) receive an `AuditEvent`
-for every permission decision, guard action, quota/rate charge, approval, loop
-trip, and rollback/compensation — a tamper-evident record of what the agent tried.
+Audit sinks (`ListSink`, `JsonlSink`, or any callable) receive an `AuditEvent` for
+every permission decision, guard action, quota/rate charge, approval, reasoning,
+loop trip, and rollback/compensation — a tamper-evident record of what the agent
+tried. Wrap work in `trace_span("plan")` and each event is stamped with the dotted
+span path, turning the flat log into a causal tree; drop in a `MetricsSink` to get
+running counts (`m.counts["permission/deny"]`) instead of storing every event.
 
 ### `@guarded_tool` / `@guarded_async_tool`
 
@@ -241,6 +272,15 @@ An explicit `parameters=` / `description=` always wins, and `tool_schema(fn)` is
 exported if you want the schema without the registry. Pure standard library — no
 Pydantic.
 
+Pass `@registry.tool(..., validate=True)` to close the loop: each call's arguments
+are checked against that schema (types, `enum`, `required`, ranges, array items)
+*before* dispatch, so a hallucinated or malformed call is reported back to the
+model instead of reaching your function as the wrong type.
+
+`parse_tool_calls(provider, response)` does the other half — it normalizes the
+tool calls out of a raw Anthropic / OpenAI / Gemini response into `ToolCall`s ready
+to feed straight to `safe_dispatch`, with no SDK dependency.
+
 Then the per-provider loop is ~5 lines; the safety-relevant call is identical:
 
 ```python
@@ -266,9 +306,9 @@ no matter which model is driving.
 cd python-agent-safety
 pip install -e ".[dev]"
 python examples/quickstart.py      # narrated single-provider walkthrough
-python examples/hardening.py       # sandbox + rate limit + loop + approval, end to end
+python examples/hardening.py       # sandbox + limits + approval + reasoning + rollback
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
-python -m pytest                   # 106 tests, standard library only
+python -m pytest                   # 185 tests, standard library only
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
@@ -279,21 +319,25 @@ GEMINI_API_KEY=... python -m pytest tests/test_gemini_live.py -v
 
 ```
 src/agent_safety/
-  permissions.py   PermissionSet — capability allow/deny + intersect
-  guards.py        Stage, Guard protocol, built-in content guards
+  permissions.py   PermissionSet — capability allow/deny + intersect (+ to_dict/from_dict)
+  guards.py        Stage, Guard protocol, content + security guards (Secret/Unicode)
   sandbox.py       PathBoundary, NetworkAllowlist — filesystem/SSRF resource guards
   quota.py         Quota — call/token budgets
-  limits.py        RateLimit (sliding window) + LoopGuard (repeat circuit breaker)
+  limits.py        RateLimit (sliding window) + Deadline (wall-clock) + LoopGuard
   approval.py      ApprovalGate / ApprovalRequest — human-in-the-loop gating
+  reasoning.py     ReasoningGate + thought_trace / record_thought — explainability
   transaction.py   rollback() / async_rollback() — compensating (saga) transactions
-  audit.py         AuditEvent, ListSink / JsonlSink
-  policy.py        Policy — the immutable bundle of all of the above, one-way narrow()
+  tracing.py       trace_span() / current_span() — causal span paths on audit events
+  audit.py         AuditEvent, ListSink / JsonlSink / MetricsSink
+  policy.py        Policy — the immutable bundle of all of the above; narrow(), explain()
   context.py       safety_context(), require(), check_*(), charge_*()
   decorators.py    guarded_tool / guarded_async_tool
   schema.py        tool_schema / Param — derive JSON-Schema from a signature
-  integrations.py  ToolRegistry — schema dialects + neutral dispatch
+  validation.py    validate_args — check tool inputs against the declared schema
+  integrations.py  ToolRegistry — schema dialects, neutral dispatch, parse_tool_calls
   exceptions.py    AgentSafetyError + PermissionDenied / GuardViolation / QuotaExceeded /
-                   RateLimitExceeded / LoopDetected / ApprovalDenied / RollbackError
+                   RateLimitExceeded / DeadlineExceeded / LoopDetected / ApprovalDenied /
+                   ExplanationRequired / RollbackError
   py.typed         PEP 561 marker — ships inline type information to consumers
 ```
 
@@ -302,10 +346,13 @@ src/agent_safety/
 The guards are **heuristics and a structural foundation**, not a complete
 security boundary by themselves. The durable guarantee is *least privilege*: even
 a prompt injection that slips past the regex tripwire still cannot invoke a
-capability the active `PermissionSet` never granted, spend past its `Quota` or
-`RateLimit`, repeat itself past a `LoopGuard`, run a gated tool without an
-`ApprovalGate` "yes", or exfiltrate a secret the `RedactPII` output guard
-scrubbed — and every attempt is on the audit trail.
+capability the active `PermissionSet` never granted, spend past its `Quota`,
+`RateLimit`, or `Deadline`, repeat itself past a `LoopGuard`, run a gated tool
+without an `ApprovalGate` "yes" or a `ReasoningGate` rationale, or exfiltrate a
+secret the `RedactPII` / `SecretScanner` output guard scrubbed — and every attempt
+is on the audit trail. (The reasoning rationale is an *accountability* record, not
+a correctness check — a model can still rationalize; pair it with a validator and
+the gates above.)
 
 The sandbox guards are likewise *pre-flight intent checks*, not an OS sandbox:
 `PathBoundary` resolves symlinks and `NetworkAllowlist` rejects private-IP

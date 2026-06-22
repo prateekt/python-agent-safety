@@ -18,13 +18,14 @@ plumbing, and nothing tied to a specific model provider.
 from __future__ import annotations
 
 import functools
-from typing import Any, Awaitable, Callable, Dict, Iterable, Tuple, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Iterable, Optional, Tuple, TypeVar
 
 from .approval import ApprovalRequest
 from .audit import AuditEvent
 from .context import current_policy
 from .guards import Guard, Stage, run_guards
 from .policy import Policy
+from .reasoning import RATIONALE_KWARG, ReasoningRequest
 
 F = TypeVar("F", bound=Callable[..., object])
 AF = TypeVar("AF", bound=Callable[..., Awaitable[object]])
@@ -46,9 +47,36 @@ def _precheck(capability: str) -> Policy:
 
 
 def _request(
-    capability: str, tool: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]
+    capability: str,
+    tool: str,
+    args: Tuple[Any, ...],
+    kwargs: Dict[str, Any],
+    rationale: Optional[str] = None,
 ) -> ApprovalRequest:
-    return ApprovalRequest(capability, tool, args, dict(kwargs))
+    # The agent's rationale (if any) rides along so a human approver can see it.
+    return ApprovalRequest(capability, tool, args, dict(kwargs), reason=rationale or "")
+
+
+def _extract_reasoning(
+    policy: Policy,
+    capability: str,
+    tool: str,
+    args: Tuple[Any, ...],
+    kwargs: Dict[str, Any],
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Pop the reserved ``rationale`` kwarg and run the reasoning check.
+
+    Only intercepts ``rationale`` when a :class:`ReasoningGate` actually gates the
+    capability, so tools with a real ``rationale`` parameter are untouched
+    otherwise. Returns the rationale and the kwargs with it removed.
+    """
+    if not policy.requires_reasoning(capability):
+        return None, kwargs
+    raw = kwargs.get(RATIONALE_KWARG)
+    rationale = raw if isinstance(raw, str) else None
+    remaining = {k: v for k, v in kwargs.items() if k != RATIONALE_KWARG}
+    policy.check_reasoning(ReasoningRequest(capability, tool, args, dict(remaining)), rationale)
+    return rationale, remaining
 
 
 def _guard_inputs(
@@ -96,7 +124,8 @@ def guarded_tool(
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             policy = _precheck(capability)
-            policy.check_approval(_request(capability, tool, args, kwargs))
+            rationale, kwargs = _extract_reasoning(policy, capability, tool, args, kwargs)
+            policy.check_approval(_request(capability, tool, args, kwargs, rationale))
             gargs, gkwargs = _guard_inputs(policy, capability, tool, extra_in, args, kwargs)
             return _exit(policy, extra_out, func(*gargs, **gkwargs))
 
@@ -127,7 +156,8 @@ def guarded_async_tool(
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             policy = _precheck(capability)
-            await policy.check_approval_async(_request(capability, tool, args, kwargs))
+            rationale, kwargs = _extract_reasoning(policy, capability, tool, args, kwargs)
+            await policy.check_approval_async(_request(capability, tool, args, kwargs, rationale))
             gargs, gkwargs = _guard_inputs(policy, capability, tool, extra_in, args, kwargs)
             return _exit(policy, extra_out, await func(*gargs, **gkwargs))
 
