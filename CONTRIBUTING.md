@@ -49,10 +49,12 @@ and cover it in `tests/test_guards.py` or `tests/test_sandbox.py`.
 
 ## Adding a budget or gate
 
-`RateLimit`/`LoopGuard` (`limits.py`) and `ApprovalGate` (`approval.py`) plug
-into `Policy` as new fields. Any such field **must** be appended by
-`Policy.narrow` (never able to widen), threaded through `safety_context`, and
-enforced in `decorators.py` so both the sync and async tool paths honour it.
+`RateLimit`/`Deadline`/`LoopGuard` (`limits.py`), `ApprovalGate` (`approval.py`),
+and `ReasoningGate` (`reasoning.py`) plug into `Policy` as new fields. Any such
+field **must** be appended by `Policy.narrow` (never able to widen), threaded
+through `safety_context`, and enforced in `decorators.py` so both the sync and
+async tool paths honour it. Decisions go to the audit sinks via `Policy.audit`,
+which stamps the active `trace_span` automatically.
 
 ## Adding a provider dialect
 

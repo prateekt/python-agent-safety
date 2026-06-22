@@ -25,7 +25,7 @@ from collections import deque
 from threading import Lock
 from typing import Deque, Optional
 
-from .exceptions import LoopDetected, RateLimitExceeded
+from .exceptions import DeadlineExceeded, LoopDetected, RateLimitExceeded
 
 
 class RateLimit:
@@ -90,6 +90,52 @@ class RateLimit:
             horizon = ts - self.window
             live = sum(1 for t in self._times if t > horizon)
             return max(0, self.limit - live)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Deadline:
+    """A wall-clock budget for a context: at most *seconds* of elapsed time.
+
+    Where :class:`~agent_safety.quota.Quota` caps *how much* and
+    :class:`RateLimit` caps *how fast*, a deadline caps *how long*. The clock
+    starts on the first guarded call inside the context (so it measures working
+    time, not setup), and a call made after the budget elapses raises
+    :class:`~agent_safety.exceptions.DeadlineExceeded`.
+    """
+
+    def __init__(self, seconds: float):
+        if seconds <= 0:
+            raise ValueError("deadline must be positive")
+        self.seconds = float(seconds)
+        self.name = f"deadline({self.seconds:g}s)"
+        self._start: Optional[float] = None
+        self._lock = Lock()
+
+    def charge(self, now: Optional[float] = None) -> None:
+        """Start the clock on first call; raise once the budget has elapsed."""
+        ts = time.monotonic() if now is None else now
+        with self._lock:
+            if self._start is None:
+                self._start = ts
+                return
+            elapsed = ts - self._start
+            if elapsed > self.seconds:
+                raise DeadlineExceeded(self.seconds, elapsed)
+
+    def remaining(self, now: Optional[float] = None) -> float:
+        """Seconds left in the budget (the full budget before the first call)."""
+        with self._lock:
+            if self._start is None:
+                return self.seconds
+        ts = time.monotonic() if now is None else now
+        return max(0.0, self.seconds - (ts - self._start))
+
+    def reset(self) -> None:
+        """Restart the clock at the next call."""
+        with self._lock:
+            self._start = None
 
     def __str__(self) -> str:
         return self.name

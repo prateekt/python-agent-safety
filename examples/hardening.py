@@ -16,6 +16,7 @@ Everything below runs offline with no API keys.
 from agent_safety import (
     ApprovalDenied,
     ApprovalGate,
+    ExplanationRequired,
     LoopDetected,
     LoopGuard,
     NetworkAllowlist,
@@ -23,9 +24,13 @@ from agent_safety import (
     PermissionSet,
     RateLimit,
     RateLimitExceeded,
+    ReasoningGate,
     guarded_tool,
+    record_thought,
     rollback,
     safety_context,
+    thought_trace,
+    trace_span,
 )
 from agent_safety.exceptions import GuardViolation
 
@@ -109,7 +114,20 @@ def main() -> None:
         except ApprovalDenied as e:
             print("rejected shell: ", e)
 
-    print("\n== 6. rollback() unwinds a failed multi-step action ==")
+    print("\n== 6. ReasoningGate requires the agent to justify itself ==")
+    gate = ReasoningGate(require=["shell.exec"], min_length=15)
+    with safety_context(PermissionSet.of("shell.exec"), reasoning=gate):
+        with thought_trace() as trace, trace_span("cleanup"):
+            record_thought("the build dir has stale artifacts; I'll clear them")
+            print("with rationale:", run_shell(
+                "rm -rf build/*", rationale="Clearing stale build output before a fresh build"))
+        print("recorded thoughts:", [t.text for t in trace])
+        try:
+            run_shell("rm -rf /")  # no rationale
+        except ExplanationRequired as e:
+            print("blocked (no why):", e)
+
+    print("\n== 7. rollback() unwinds a failed multi-step action ==")
     ledger = []  # stand-in for external side effects
     try:
         with rollback() as tx:
