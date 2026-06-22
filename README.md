@@ -57,6 +57,9 @@ with safely(
 That's the whole beginner surface. When you outgrow it, every keyword maps to a
 real object you can use directly — read on.
 
+> **New here?** Walk through [**TUTORIAL.md**](TUTORIAL.md) — build a complete,
+> running safe agent in about 10 minutes, no API keys needed.
+
 ## The full version
 
 Under the hood `safely` builds the same objects you can wire by hand for full
@@ -349,6 +352,7 @@ no matter which model is driving.
 cd python-agent-safety
 pip install -e ".[dev]"
 python examples/easy.py            # the simplest possible intro (@tool + safely)
+python examples/first_agent.py     # a complete offline agent loop (see TUTORIAL.md)
 python examples/quickstart.py      # narrated single-provider walkthrough
 python examples/hardening.py       # sandbox + limits + approval + reasoning + rollback
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
