@@ -5,6 +5,20 @@ All notable changes to `agent_safety` are documented here. The format follows
 [Semantic Versioning](https://semver.org/) from 1.0 onward (pre-1.0, minor
 versions may include additive API changes).
 
+## [Unreleased]
+
+### Added
+- A public, CI-gated **attack scorecard** (`benchmarks/attack_suite.py` →
+  `benchmarks/SCORECARD.md`): 13 known agent-attack scenarios across the OWASP LLM
+  Top 10, each asserting containment, plus 4 legitimate-action controls.
+  `tests/test_attack_suite.py` enforces it so the claims can't silently regress.
+- `POSITIONING.md` — the action-governance / least-privilege-for-agents thesis,
+  and how it complements (rather than competes with) content scanners.
+
+### Changed
+- README re-framed around action governance ("what an agent may *do*"), with the
+  scorecard summary and the content-vs-action framing.
+
 ## [0.8.0]
 
 ### Added

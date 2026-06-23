@@ -51,7 +51,7 @@ agent_safety = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]   # "." lets tests import the benchmarks/ attack suite
 
 [tool.mypy]
 files = ["src"]
