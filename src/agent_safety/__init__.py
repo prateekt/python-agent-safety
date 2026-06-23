@@ -35,7 +35,9 @@ Quick start::
 
 from __future__ import annotations
 
-from .approval import ApprovalGate, ApprovalRequest
+from .action import Action
+from .approval import ApprovalGate
+from .approval import ApprovalRequest as ApprovalRequest  # back-compat alias of Action
 from .audit import AuditEvent, AuditSink, JsonlSink, ListSink, MetricsSink
 from .constitution import ConstitutionGate
 from .context import (
@@ -50,7 +52,7 @@ from .context import (
     safety_context,
 )
 from .decorators import guarded_async_tool, guarded_tool
-from .easy import safely, tool
+from .easy import Profiles, guard, safely, tool
 from .exceptions import (
     AgentSafetyError,
     ApprovalDenied,
@@ -88,25 +90,27 @@ from .preview import PreviewGate
 from .quota import Quota, RiskBudget
 from .reasoning import (
     ReasoningGate,
-    ReasoningRequest,
     Thought,
     ThoughtTrace,
     current_trace,
     record_thought,
     thought_trace,
 )
+from .reasoning import ReasoningRequest as ReasoningRequest  # back-compat alias of Action
 from .sandbox import NetworkAllowlist, PathBoundary
 from .schema import Param, tool_description, tool_schema
 from .tracing import current_span, trace_span
 from .transaction import Transaction, async_rollback, rollback
 from .validation import validate_args
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     # the easy front door (start here)
     "tool",
     "safely",
+    "guard",
+    "Profiles",
     # context / ``with`` construct
     "safety_context",
     "current_policy",
@@ -145,15 +149,15 @@ __all__ = [
     "ConcurrencyLimit",
     "RiskBudget",
     "LoopGuard",
+    # the object every safety hook (approver / judge / validator) receives
+    "Action",
     # human-in-the-loop approval & previews
     "ApprovalGate",
-    "ApprovalRequest",
     "PreviewGate",
     # constitutional rules
     "ConstitutionGate",
     # explainability / reasoning
     "ReasoningGate",
-    "ReasoningRequest",
     "thought_trace",
     "record_thought",
     "current_trace",

@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import inspect
 from contextlib import contextmanager
-from typing import Any, Callable, Iterable, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Union
 
 from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink
@@ -115,6 +115,48 @@ def tool(
         return _make_tool(func, capability or func.__name__, cache, risk, preview)
 
     return decorator
+
+
+def guard(*funcs: Callable[..., Any]) -> Any:
+    """Wrap functions you already have as guarded tools — without editing them.
+
+    Like applying ``@tool`` to each, in bulk. Handy for adding safety to an
+    existing toolset::
+
+        safe_search, safe_fetch = guard(search, fetch)
+
+    Returns the single wrapped function, or a tuple when you pass several. Call
+    them inside a ``safely(...)`` block, exactly like a ``@tool``.
+    """
+    wrapped = tuple(tool(f) for f in funcs)
+    return wrapped[0] if len(wrapped) == 1 else wrapped
+
+
+class Profiles:
+    """Ready-made bundles of ``safely(...)`` settings — sensible defaults so you
+    don't have to assemble them. Splat one in and add your ``allow=``::
+
+        with safely(allow="search", **Profiles.hardened()):
+            ...
+    """
+
+    @staticmethod
+    def hardened() -> Dict[str, Any]:
+        """Capability-agnostic safety hygiene: scrub secrets, block prompt
+        injection, strip hidden characters, and stop runaway loops. Pair with
+        your own ``allow=`` to choose *what* the agent may do."""
+        return {
+            "hide_secrets": True,
+            "block_injections": True,
+            "clean_text": True,
+            "no_repeats": 5,
+        }
+
+    @staticmethod
+    def observe() -> Dict[str, Any]:
+        """Watch first, block nothing: monitor (dry-run) mode with printed
+        decisions. Run your agent, read the log, then tighten ``allow=``."""
+        return {"monitor": True, "log": True}
 
 
 # -- safely(...) ----------------------------------------------------------

@@ -30,24 +30,19 @@ from __future__ import annotations
 
 import contextvars
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Callable, Iterable, Iterator, List, Optional
+
+from .action import Action
 
 RATIONALE_KWARG = "rationale"
 
-# A validator decides whether a rationale is adequate for a given request.
-RationaleValidator = Callable[[str, "ReasoningRequest"], bool]
+# A validator decides whether a rationale is adequate for a given action.
+RationaleValidator = Callable[[str, Action], bool]
 
-
-@dataclass(frozen=True)
-class ReasoningRequest:
-    """Context passed to a rationale validator."""
-
-    capability: str
-    tool: str
-    args: Tuple[Any, ...] = ()
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+# Back-compat: a validator's second argument used to be called ReasoningRequest.
+ReasoningRequest = Action
 
 
 class ReasoningGate:
