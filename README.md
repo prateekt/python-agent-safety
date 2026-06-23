@@ -8,17 +8,25 @@
 ![Providers](https://img.shields.io/badge/providers-Claude%20%7C%20OpenAI%20%7C%20Gemini-8A2BE2)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**Idiomatic, provider-agnostic Python constructs for AI-agent safety.**
+**Least-privilege runtime control for AI agents — governing what they're allowed
+to *do*, not just what they say.**
 
-Wrapping an LLM agent safely means answering, on every step: *"Is the agent
-allowed to do this?"*, *"Is this content safe to send or use?"*, *"Is there
-budget left?"* — and *"can I see what happened?"* `agent_safety` answers all
-four with constructs Python developers already know — a `with` block, a
-decorator, and small composable objects — instead of a sprawling config format.
+Content scanners answer *"is this text safe?"* Agents need a different question:
+*"is this agent allowed to **do** this?"* — read that file, call that API, spend
+that budget. `agent_safety` is the **action layer**: an agent can only invoke the
+capabilities you granted, on the budgets you set, and even a successful prompt
+injection can't reach a tool it was never given. Think **least-privilege / IAM for
+agents** — expressed with constructs Python developers already know (a `with`
+block and a decorator), not a config DSL.
 
-It is **pure standard library** (no dependencies) and **provider-agnostic**: the
-same guarded tools govern a **Claude, OpenAI, or Gemini** agent unchanged. The
-overhead is **~12 µs per tool call** ([benchmark](examples/benchmark.py)) —
+It's **complementary to content guardrails, not a competitor**: plug Presidio /
+LLM Guard / Lakera in behind the same `Guard` interface for detection, while this
+governs the actions. See [**POSITIONING.md**](POSITIONING.md).
+
+Measured, not asserted: the [**attack scorecard**](benchmarks/SCORECARD.md)
+(CI-gated) shows **13/13 known agent attacks contained, 4/4 legitimate actions
+allowed**. **Pure standard library** (zero dependencies), **provider- and
+MCP-agnostic**, and **~12 µs per tool call** ([benchmark](examples/benchmark.py)) —
 negligible against a model round-trip.
 
 ## Install
@@ -441,7 +449,8 @@ python examples/quickstart.py      # narrated single-provider walkthrough
 python examples/hardening.py       # sandbox + limits + approval + reasoning + rollback
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
 python examples/benchmark.py       # per-call overhead on your machine
-python -m pytest                   # 240 tests, standard library only
+python benchmarks/attack_suite.py  # the attack scorecard (what's contained)
+python -m pytest                   # 242 tests (incl. the CI-gated attack suite)
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
