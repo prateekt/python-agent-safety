@@ -82,3 +82,31 @@ stays in `integrations.py`, which consumes the neutral object this produces.
 ## Pull requests
 
 Keep PRs focused, include tests, and make sure `python -m pytest` is green.
+
+## Releasing
+
+The package version is sourced dynamically from `agent_safety.__version__`, so it
+lives in exactly one place (`src/agent_safety/__init__.py`). Publishing uses PyPI
+**Trusted Publishing** (OIDC) via `.github/workflows/publish.yml` — no API token
+is stored in the repo.
+
+One-time setup on PyPI (project owner): add a *pending publisher* under the
+`agent-safety` project — owner `prateekt`, repo `python-agent-safety`, workflow
+`publish.yml`, environment `pypi`.
+
+To cut a release:
+
+1. Bump `__version__` in `src/agent_safety/__init__.py` and add a `CHANGELOG.md` entry.
+2. Merge to `main` (CI green).
+3. Tag it: `git tag -a vX.Y.Z -m "agent_safety vX.Y.Z" && git push origin vX.Y.Z`.
+4. Publish a **GitHub Release** for that tag — this triggers `publish.yml`, which
+   re-runs the tests, builds, `twine check`s, and uploads to PyPI.
+
+For the very first publish (the `publish.yml` workflow didn't exist at the `v0.8.0`
+tag), run it once manually: **Actions → Publish to PyPI → Run workflow** on `main`.
+
+Verify a build locally before releasing:
+
+```bash
+python -m build && python -m twine check dist/*
+```

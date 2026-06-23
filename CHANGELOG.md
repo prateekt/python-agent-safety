@@ -15,7 +15,10 @@ versions may include additive API changes).
   hygiene) and `Profiles.observe()` (monitor/dry-run + logging).
 - `SECURITY.md`, `THREAT_MODEL.md` (with an OWASP LLM Top 10 mapping), and an
   overhead benchmark (`examples/benchmark.py`).
-- PyPI-ready packaging: dynamic version, project URLs, full classifiers.
+- PyPI-ready packaging: dynamic version, project URLs, full classifiers, and a
+  Trusted-Publishing release workflow (`.github/workflows/publish.yml`). Verified:
+  builds clean, passes `twine check`, installs with zero dependencies; the
+  `agent-safety` name is available on PyPI.
 
 ### Changed
 - Unified `ApprovalRequest` and `ReasoningRequest` into a single `Action` — the
