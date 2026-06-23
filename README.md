@@ -16,7 +16,16 @@ four with constructs Python developers already know — a `with` block, a
 decorator, and small composable objects — instead of a sprawling config format.
 
 It is **pure standard library** (no dependencies) and **provider-agnostic**: the
-same guarded tools govern a **Claude, OpenAI, or Gemini** agent unchanged.
+same guarded tools govern a **Claude, OpenAI, or Gemini** agent unchanged. The
+overhead is **~12 µs per tool call** ([benchmark](examples/benchmark.py)) —
+negligible against a model round-trip.
+
+## Install
+
+```bash
+pip install agent-safety        # zero runtime dependencies
+# from source: pip install -e ".[dev]"
+```
 
 ## Start here
 
@@ -54,6 +63,18 @@ with safely(
     log=True,                       # print every decision
 ):
     ...
+```
+
+**Already have tools?** Wrap them in bulk with `guard` — no edits — and reach for
+a ready-made profile instead of assembling settings:
+
+```python
+from agent_safety import guard, safely, Profiles
+
+safe_search, safe_fetch = guard(search, fetch)   # your existing functions, now guarded
+
+with safely(allow=["search", "fetch"], **Profiles.hardened()):  # paranoid defaults
+    safe_search("agent safety")
 ```
 
 That's the whole beginner surface. When you outgrow it, every keyword maps to a
@@ -418,7 +439,8 @@ python examples/multi_agent.py     # two agents, different powers, a shared conc
 python examples/quickstart.py      # narrated single-provider walkthrough
 python examples/hardening.py       # sandbox + limits + approval + reasoning + rollback
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
-python -m pytest                   # 234 tests, standard library only
+python examples/benchmark.py       # per-call overhead on your machine
+python -m pytest                   # 240 tests, standard library only
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
@@ -429,13 +451,14 @@ GEMINI_API_KEY=... python -m pytest tests/test_gemini_live.py -v
 
 ```
 src/agent_safety/
-  easy.py          tool / safely — the beginner front door (plain-keyword facade)
+  easy.py          tool / safely / guard / Profiles — the beginner front door
   permissions.py   PermissionSet — capability allow/deny + intersect (+ to_dict/from_dict)
   guards.py        Stage, Guard protocol, content + security guards (Secret/Unicode)
   sandbox.py       PathBoundary, NetworkAllowlist — filesystem/SSRF resource guards
   quota.py         Quota (call/token budgets) + RiskBudget (per-action risk)
   limits.py        RateLimit + Deadline + ConcurrencyLimit + LoopGuard
-  approval.py      ApprovalGate / ApprovalRequest — human-in-the-loop gating
+  action.py        Action — the one object every safety hook (approver/judge/...) receives
+  approval.py      ApprovalGate — human-in-the-loop gating
   preview.py       PreviewGate — approve a tool's "what would this do?" preview
   constitution.py  ConstitutionGate — plain-English rules judged by a model
   reasoning.py     ReasoningGate + thought_trace / record_thought — explainability
@@ -480,3 +503,9 @@ of these, but with them.
 transaction: your compensators run sequentially and can themselves fail (which is
 recorded, not hidden). It bounds the blast radius of a failed multi-step action;
 it does not give you atomicity across external systems.
+
+For the full picture — trust boundaries, what's in and out of scope, residual
+risks, and a mapping to the **OWASP LLM Top 10** — see
+[**THREAT_MODEL.md**](THREAT_MODEL.md). To report a vulnerability, see
+[**SECURITY.md**](SECURITY.md). Release history is in
+[**CHANGELOG.md**](CHANGELOG.md).

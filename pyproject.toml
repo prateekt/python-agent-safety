@@ -4,22 +4,44 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-safety"
-version = "0.3.0"
-description = "Idiomatic, provider-agnostic Python constructs for AI-agent safety: scoped permissions, prompt/input/output guards, sandbox + SSRF guards, quotas, rate limits, loop detection, human-in-the-loop approval, audit hooks, and Claude/OpenAI/Gemini tool-call integration."
+dynamic = ["version"]
+description = "Idiomatic, zero-dependency, provider-agnostic Python safety layer for AI agents: least-privilege permissions, prompt/input/output guards, sandbox + SSRF guards, quotas/rate/deadline/concurrency/risk budgets, loop detection, human-in-the-loop approval, constitutional rules, action previews, honeytokens, audit/tracing, and Claude/OpenAI/Gemini/MCP tool-call integration."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-keywords = ["ai", "agents", "safety", "permissions", "guardrails", "llm"]
+authors = [{ name = "Prateek Tandon" }]
+keywords = [
+    "ai", "agents", "agent-safety", "llm", "guardrails", "tool-use",
+    "least-privilege", "permissions", "prompt-injection", "mcp", "security",
+]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Typing :: Typed",
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/prateekt/python-agent-safety"
+Repository = "https://github.com/prateekt/python-agent-safety"
+Issues = "https://github.com/prateekt/python-agent-safety/issues"
+Changelog = "https://github.com/prateekt/python-agent-safety/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "mypy>=1.8", "ruff>=0.4"]
+
+[tool.setuptools.dynamic]
+version = { attr = "agent_safety.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

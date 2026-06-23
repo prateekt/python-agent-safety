@@ -30,31 +30,16 @@ sync tool raises ``RuntimeError`` rather than silently skipping approval.
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
-from typing import Any, Awaitable, Callable, Dict, Iterable, Tuple, Union
+from typing import Awaitable, Callable, Iterable, Union
+
+from .action import Action
 
 # An approver returns truthy to allow, falsy to deny — sync or via a coroutine.
-Approver = Callable[["ApprovalRequest"], Union[bool, Awaitable[bool]]]
+Approver = Callable[[Action], Union[bool, Awaitable[bool]]]
 
-
-@dataclass(frozen=True)
-class ApprovalRequest:
-    """The context handed to an approver so it can make an informed decision.
-
-    Attributes:
-        capability: The capability the tool requires (e.g. ``"shell.exec"``).
-        tool: The tool's name.
-        args: Positional arguments the agent passed, *before* input guards run.
-        kwargs: Keyword arguments the agent passed, *before* input guards run.
-        reason: Optional note from the gate explaining why approval is required.
-    """
-
-    capability: str
-    tool: str
-    args: Tuple[Any, ...] = ()
-    kwargs: Dict[str, Any] = field(default_factory=dict)
-    reason: str = ""
+# Back-compat: an approver's argument used to be called ApprovalRequest.
+ApprovalRequest = Action
 
 
 class ApprovalGate:
