@@ -1,6 +1,7 @@
 # agent_safety
 
 [![CI](https://github.com/prateekt/python-agent-safety/actions/workflows/ci.yml/badge.svg)](https://github.com/prateekt/python-agent-safety/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/agent-safety)](https://pypi.org/project/agent-safety/)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Dependencies](https://img.shields.io/badge/dependencies-none%20(stdlib)-brightgreen)
 ![Typed](https://img.shields.io/badge/typed-mypy%20strict-blue)
