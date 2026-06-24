@@ -12,10 +12,10 @@ provider's response and call ``charge_tokens``" into one of:
   **zero** per-call reporting.
 
       ask = metered(client.messages.create,         # Anthropic, or any callable
-                    price=Price(input=3.0, output=15.0))   # $ / 1M tokens
-      with safely(allow="...", calls=100, tokens=200_000, usd=5.00):
+                    model="claude-opus-4-8")        # price from the built-in table
+      with safely(allow="...", budget="$100"):       # "spend at most $100"
           resp = ask(model="...", messages=[...])   # call + tokens + cost auto-charged,
-                                                    # and it stops at $5.00 of spend
+                                                    # and it stops at $100 of spend
 
 Recognized usage shapes (object attributes or dict keys, no SDK import):
 
@@ -51,7 +51,7 @@ class Price:
     """Model pricing, in **US dollars per 1,000,000 tokens**.
 
     e.g. ``Price(input=3.0, output=15.0)`` is $3 / Mtok in, $15 / Mtok out.
-    Combine with a :class:`~agent_safety.quota.CostBudget` (``safely(usd=...)``)
+    Combine with a :class:`~agent_safety.quota.CostBudget` (``safely(budget="$100")``)
     to cap spend.
     """
 
@@ -127,15 +127,28 @@ def charge_usage(response: Any, price: Optional[Price] = None) -> int:
     return usage.total
 
 
-def metered(fn: Callable[..., Any], price: Optional[Price] = None) -> Callable[..., Any]:
+def metered(
+    fn: Callable[..., Any],
+    price: Optional[Price] = None,
+    model: Optional[str] = None,
+) -> Callable[..., Any]:
     """Wrap a model-call function so each call auto-charges itself.
 
     On every call: one call is charged against the active quota / rate limit /
-    deadline *before* the request, and the response's tokens (and, with a *price*,
+    deadline *before* the request, and the response's tokens (and, with a price,
     the dollar cost) are charged *after*. Works on sync and async callables
     (auto-detected), so you wrap your model client's method once and stop reporting
     usage by hand.
+
+    Pricing: pass ``price=Price(input=..., output=...)`` ($ per 1M tokens), or
+    ``model="claude-opus-4-8"`` to look it up in the built-in table (see
+    :mod:`agent_safety.prices`). With neither, tokens are charged but cost is not.
     """
+    if price is None and model is not None:
+        from .prices import price_for  # lazy import to avoid a cycle (prices -> usage)
+
+        price = price_for(model)
+
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)

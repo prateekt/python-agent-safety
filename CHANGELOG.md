@@ -12,12 +12,16 @@ versions may include additive API changes).
   wraps a model-call function (sync or async) so every call charges itself — the
   call against the quota / rate limit / deadline, the response's tokens against the
   token budget, and, with a `Price`, the **dollar cost** against a money budget.
-- **Money budget**: `CostBudget` / `safely(usd=...)` caps spend in dollars
-  (`CostBudgetExceeded`). `Price(input=…, output=…)` is $ per 1M tokens;
-  `extract_usage(response)` returns the input/output/total split duck-typed from
-  the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency).
-- `charge_usage(response, price=…)` / `charge_cost(amount)` / `extract_tokens`,
-  `TokenUsage`.
+- **Money budget**: say the dollar amount and the rest is worked out —
+  `safely(budget="$100")` (accepts `"$100"`, `"$1,000.50"`, or a number) caps spend
+  and raises `CostBudgetExceeded`. `metered(call, model="claude-opus-4-8")` prices the
+  call from a small built-in table (`price_for`, `agent_safety.prices`); an explicit
+  `price=Price(input=…, output=…)` ($ per 1M tokens) always wins, and an unknown model
+  raises rather than silently billing $0.
+- `extract_usage(response)` returns the input/output/total token split duck-typed from
+  the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency). Also
+  `CostBudget(max_usd)`, `charge_usage(response, price=…)`, `charge_cost(amount)`,
+  `extract_tokens`, `TokenUsage`.
 
 ## [Unreleased]
 

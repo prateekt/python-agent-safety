@@ -89,6 +89,7 @@ from .mcp import SafeMCP, guard_mcp
 from .permissions import PermissionSet
 from .policy import Explanation, Policy
 from .preview import PreviewGate
+from .prices import price_for
 from .quota import CostBudget, Quota, RiskBudget
 from .reasoning import (
     ReasoningGate,
@@ -132,6 +133,7 @@ __all__ = [
     "extract_usage",
     "Price",
     "TokenUsage",
+    "price_for",
     # permissions / policy
     "PermissionSet",
     "Policy",

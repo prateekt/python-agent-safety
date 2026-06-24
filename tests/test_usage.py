@@ -12,9 +12,11 @@ from agent_safety import (
     extract_tokens,
     extract_usage,
     metered,
+    price_for,
     safely,
     safety_context,
 )
+from agent_safety.easy import _money
 from agent_safety.exceptions import CostBudgetExceeded, QuotaExceeded
 
 # -- extract_tokens across provider shapes --------------------------------
@@ -159,14 +161,14 @@ def test_cost_budget_charges_and_caps():
             ask("second")          # another $0.60 -> over $1.00
 
 
-def test_safely_usd_caps_spend():
+def test_safely_dollar_string_budget_caps_spend():
     price = Price(input=3.0, output=15.0)
 
     def model(_):
         return NS(usage=NS(input_tokens=500_000, output_tokens=500_000))  # $9
 
     ask = metered(model, price=price)
-    with safely(allow="*", usd=5.00):
+    with safely(allow="*", budget="$5.00"):     # the headline UX: "spend at most $5"
         with pytest.raises(CostBudgetExceeded):
             ask("x")               # $9 > $5
 
@@ -186,3 +188,59 @@ def test_no_price_means_no_cost_charge():
 def test_cost_budget_rejects_negative():
     with pytest.raises(ValueError):
         CostBudget(1.0).charge(-1.0)
+
+
+# -- dollar-string budget parsing -----------------------------------------
+
+@pytest.mark.parametrize("given,expected", [
+    ("$100", 100.0),
+    ("$100.0", 100.0),
+    ("$1,000.50", 1000.50),
+    ("  $5  ", 5.0),
+    (100, 100.0),
+    (2.50, 2.50),
+])
+def test_money_string_parsing(given, expected):
+    assert _money(given) == expected
+
+
+def test_money_rejects_garbage():
+    with pytest.raises(ValueError):
+        _money("a lot")
+
+
+# -- built-in price table -------------------------------------------------
+
+def test_price_for_known_models():
+    assert price_for("claude-opus-4-8-20260514") == Price(15.0, 75.0)
+    assert price_for("gpt-4o-mini") == Price(0.15, 0.60)
+    assert price_for("gpt-4o") == Price(2.50, 10.0)           # not shadowed by -mini
+    assert price_for("gemini-1.5-flash-002") == Price(0.075, 0.30)
+
+
+def test_price_for_unknown_raises():
+    with pytest.raises(ValueError):
+        price_for("some-unlisted-model-v9")
+
+
+def test_metered_model_autoprices():
+    # name the model instead of typing a Price; budget enforced
+    def opus(_):
+        return NS(usage=NS(input_tokens=1_000_000, output_tokens=0))  # $15 at opus input
+
+    ask = metered(opus, model="claude-opus-4-8")
+    budget = CostBudget(10.00)
+    with safety_context(PermissionSet.allow_all(), cost_budget=budget):
+        with pytest.raises(CostBudgetExceeded):
+            ask("x")               # $15 > $10
+
+
+def test_metered_explicit_price_beats_model():
+    def m(_):
+        return NS(usage=NS(input_tokens=1_000_000, output_tokens=0))
+
+    ask = metered(m, price=Price(input=1.0, output=1.0), model="claude-opus-4-8")
+    budget = CostBudget(100.0)
+    with safety_context(PermissionSet.allow_all(), cost_budget=budget):
+        ask("x")                   # uses explicit $1/Mtok, not opus $15
+    assert round(budget.spent, 4) == 1.0
