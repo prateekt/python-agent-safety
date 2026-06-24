@@ -27,6 +27,7 @@ from .constitution import ConstitutionGate
 from .exceptions import (
     ApprovalDenied,
     ConstitutionViolation,
+    CostBudgetExceeded,
     DeadlineExceeded,
     ExplanationRequired,
     LoopDetected,
@@ -38,7 +39,7 @@ from .guards import Guard, Stage, run_guards
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .preview import PreviewGate
-from .quota import Quota, RiskBudget
+from .quota import CostBudget, Quota, RiskBudget
 from .reasoning import ReasoningGate, ReasoningRequest
 from .tracing import current_span
 
@@ -69,6 +70,7 @@ class Policy:
     deadlines: Tuple[Deadline, ...] = ()
     concurrency_limits: Tuple[ConcurrencyLimit, ...] = ()
     risk_budgets: Tuple[RiskBudget, ...] = ()
+    cost_budgets: Tuple[CostBudget, ...] = ()
     loop_guards: Tuple[LoopGuard, ...] = ()
     approvals: Tuple[ApprovalGate, ...] = ()
     reasonings: Tuple[ReasoningGate, ...] = ()
@@ -164,6 +166,18 @@ class Policy:
                 self.audit(AuditEvent("risk", "deny", detail=f"risk+{amount}"))
                 raise
         self.audit(AuditEvent("risk", "charge", detail=f"risk+{amount}"))
+
+    def charge_cost(self, amount: float) -> None:
+        """Charge *amount* dollars against every active :class:`CostBudget`."""
+        if amount <= 0 or not self.cost_budgets:
+            return
+        for budget in self.cost_budgets:
+            try:
+                budget.charge(amount)
+            except CostBudgetExceeded:
+                self.audit(AuditEvent("cost", "deny", detail=f"${amount:.4f}"))
+                raise
+        self.audit(AuditEvent("cost", "charge", detail=f"${amount:.4f}"))
 
     # -- loop detection ---------------------------------------------------
     def check_loop(self, tool: str, signature: str) -> None:
@@ -358,6 +372,7 @@ class Policy:
         deadlines: Iterable[Deadline] = (),
         concurrency_limits: Iterable[ConcurrencyLimit] = (),
         risk_budgets: Iterable[RiskBudget] = (),
+        cost_budgets: Iterable[CostBudget] = (),
         loop_guards: Iterable[LoopGuard] = (),
         approvals: Iterable[ApprovalGate] = (),
         reasonings: Iterable[ReasoningGate] = (),
@@ -387,6 +402,7 @@ class Policy:
             deadlines=self.deadlines + tuple(deadlines),
             concurrency_limits=self.concurrency_limits + tuple(concurrency_limits),
             risk_budgets=self.risk_budgets + tuple(risk_budgets),
+            cost_budgets=self.cost_budgets + tuple(cost_budgets),
             loop_guards=self.loop_guards + tuple(loop_guards),
             approvals=self.approvals + tuple(approvals),
             reasonings=self.reasonings + tuple(reasonings),

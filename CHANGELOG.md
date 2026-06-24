@@ -8,12 +8,16 @@ versions may include additive API changes).
 ## [0.9.0]
 
 ### Added
-- **Automatic token accounting** so you barely report anything: `metered(fn)`
+- **Automatic token & cost accounting** so you barely report anything: `metered(fn)`
   wraps a model-call function (sync or async) so every call charges itself — the
-  call against the quota / rate limit / deadline, and the response's tokens against
-  the token budget. `charge_usage(response)` does the same in one line if you call
-  the model yourself, and `extract_tokens(response)` duck-types the count from the
-  Gemini / OpenAI / Anthropic usage shapes (object or dict, no SDK dependency).
+  call against the quota / rate limit / deadline, the response's tokens against the
+  token budget, and, with a `Price`, the **dollar cost** against a money budget.
+- **Money budget**: `CostBudget` / `safely(usd=...)` caps spend in dollars
+  (`CostBudgetExceeded`). `Price(input=…, output=…)` is $ per 1M tokens;
+  `extract_usage(response)` returns the input/output/total split duck-typed from
+  the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency).
+- `charge_usage(response, price=…)` / `charge_cost(amount)` / `extract_tokens`,
+  `TokenUsage`.
 
 ## [Unreleased]
 

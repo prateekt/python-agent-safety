@@ -204,22 +204,26 @@ with safety_context(
     ...
 ```
 
-**Token accounting, automatically.** Calls / rate / deadline / loops are charged
-for you at the tool boundary. Tokens are the one thing the library can't see
-(it never makes the model call), so wrap that call once with `metered` and every
-request charges its own tokens — no per-call reporting:
+**Token *and money* accounting, automatically.** Calls / rate / deadline / loops
+are charged for you at the tool boundary. The model round-trip is the one thing
+the library can't see (it never makes the call), so wrap that call once with
+`metered` and every request charges its own **call, tokens, and dollar cost** — no
+per-call reporting:
 
 ```python
-from agent_safety import metered
+from agent_safety import metered, Price
 
-ask = metered(client.messages.create)        # any provider's call; sync or async
-with safely(allow="...", calls=100, tokens=200_000):
-    resp = ask(model="...", messages=[...])   # the call AND its tokens are charged
+ask = metered(client.messages.create,             # any provider; sync or async
+              price=Price(input=3.0, output=15.0))  # $ per 1M tokens
+with safely(allow="...", calls=100, tokens=200_000, usd=5.00):
+    resp = ask(model="...", messages=[...])        # call + tokens + cost charged,
+                                                   # and it stops at $5.00 of spend
 ```
 
-`metered` understands the Gemini / OpenAI / Anthropic usage shapes (no SDK
-dependency). If you call the model yourself, `charge_usage(resp)` does the same in
-one line; for anything exotic, fall back to `charge_tokens(n)`.
+`metered` reads the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency).
+Omit `price=` for tokens-only; or if you call the model yourself, `charge_usage(resp, price)`
+does the same in one line. A `usd=` budget raises `CostBudgetExceeded` when spend
+crosses the limit.
 
 **Many agents at once.** Because the policy lives in a `contextvars.ContextVar`,
 every thread and every `asyncio` task automatically gets its *own* rules — so

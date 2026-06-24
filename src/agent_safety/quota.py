@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Optional
 
-from .exceptions import QuotaExceeded, RiskBudgetExceeded
+from .exceptions import CostBudgetExceeded, QuotaExceeded, RiskBudgetExceeded
 
 
 @dataclass
@@ -99,3 +99,38 @@ class RiskBudget:
 
     def __str__(self) -> str:
         return f"RiskBudget(risk={self.risk_used}/{self.max_risk})"
+
+
+@dataclass
+class CostBudget:
+    """A money budget, in US dollars.
+
+    Spend is charged from token usage and a price (see
+    :class:`~agent_safety.usage.Price` and :func:`~agent_safety.usage.metered`);
+    the charge that crosses ``max_usd`` raises
+    :class:`~agent_safety.exceptions.CostBudgetExceeded`. Stops a runaway agent
+    from running up a bill.
+    """
+
+    max_usd: float
+    spent: float = 0.0
+
+    def __post_init__(self) -> None:
+        self._lock = Lock()
+
+    def charge(self, amount: float) -> None:
+        """Account for *amount* dollars, raising if it would exceed the budget."""
+        if amount < 0:
+            raise ValueError("cost amount must be non-negative")
+        if amount == 0:
+            return
+        with self._lock:
+            if self.spent + amount > self.max_usd:
+                raise CostBudgetExceeded(self.max_usd, self.spent + amount)
+            self.spent += amount
+
+    def remaining(self) -> float:
+        return self.max_usd - self.spent
+
+    def __str__(self) -> str:
+        return f"CostBudget(${self.spent:.4f}/${self.max_usd:.2f})"

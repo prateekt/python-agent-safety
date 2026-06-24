@@ -42,6 +42,7 @@ from .audit import AuditEvent, AuditSink, JsonlSink, ListSink, MetricsSink
 from .constitution import ConstitutionGate
 from .context import (
     charge_call,
+    charge_cost,
     charge_tokens,
     check_input,
     check_output,
@@ -57,6 +58,7 @@ from .exceptions import (
     AgentSafetyError,
     ApprovalDenied,
     ConstitutionViolation,
+    CostBudgetExceeded,
     DeadlineExceeded,
     ExplanationRequired,
     GuardViolation,
@@ -87,7 +89,7 @@ from .mcp import SafeMCP, guard_mcp
 from .permissions import PermissionSet
 from .policy import Explanation, Policy
 from .preview import PreviewGate
-from .quota import Quota, RiskBudget
+from .quota import CostBudget, Quota, RiskBudget
 from .reasoning import (
     ReasoningGate,
     Thought,
@@ -101,7 +103,7 @@ from .sandbox import NetworkAllowlist, PathBoundary
 from .schema import Param, tool_description, tool_schema
 from .tracing import current_span, trace_span
 from .transaction import Transaction, async_rollback, rollback
-from .usage import charge_usage, extract_tokens, metered
+from .usage import Price, TokenUsage, charge_usage, extract_tokens, extract_usage, metered
 from .validation import validate_args
 
 __version__ = "0.9.0"
@@ -122,10 +124,14 @@ __all__ = [
     "check_output",
     "charge_call",
     "charge_tokens",
-    # automatic token accounting
+    "charge_cost",
+    # automatic token & cost accounting
     "metered",
     "charge_usage",
     "extract_tokens",
+    "extract_usage",
+    "Price",
+    "TokenUsage",
     # permissions / policy
     "PermissionSet",
     "Policy",
@@ -153,6 +159,7 @@ __all__ = [
     "Deadline",
     "ConcurrencyLimit",
     "RiskBudget",
+    "CostBudget",
     "LoopGuard",
     # the object every safety hook (approver / judge / validator) receives
     "Action",
@@ -211,4 +218,5 @@ __all__ = [
     "ConstitutionViolation",
     "HoneytokenTripped",
     "RiskBudgetExceeded",
+    "CostBudgetExceeded",
 ]

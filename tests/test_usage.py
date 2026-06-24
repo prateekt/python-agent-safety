@@ -4,14 +4,18 @@ from types import SimpleNamespace as NS
 import pytest
 
 from agent_safety import (
+    CostBudget,
     PermissionSet,
+    Price,
     Quota,
     charge_usage,
     extract_tokens,
+    extract_usage,
     metered,
+    safely,
     safety_context,
 )
-from agent_safety.exceptions import QuotaExceeded
+from agent_safety.exceptions import CostBudgetExceeded, QuotaExceeded
 
 # -- extract_tokens across provider shapes --------------------------------
 
@@ -118,3 +122,67 @@ def test_metered_async():
             return resp.text, q.calls_used, q.tokens_used
 
     assert asyncio.run(run()) == ("x", 1, 15)
+
+
+# -- input/output split + cost --------------------------------------------
+
+def test_extract_usage_splits_input_output():
+    u = extract_usage(NS(usage=NS(input_tokens=1000, output_tokens=500)))
+    assert (u.input, u.output, u.total) == (1000, 500, 1500)
+
+
+def test_extract_usage_gemini_and_total():
+    u = extract_usage(NS(usage_metadata=NS(
+        prompt_token_count=2000, candidates_token_count=300, total_token_count=2300)))
+    assert (u.input, u.output, u.total) == (2000, 300, 2300)
+
+
+def test_price_computes_cost():
+    # $3 / Mtok in, $15 / Mtok out
+    price = Price(input=3.0, output=15.0)
+    cost = price.cost(extract_usage(NS(usage=NS(input_tokens=1_000_000, output_tokens=1_000_000))))
+    assert cost == 18.0
+
+
+def test_cost_budget_charges_and_caps():
+    budget = CostBudget(1.00)
+    price = Price(input=3.0, output=15.0)
+
+    def model(_):
+        return NS(usage=NS(input_tokens=100_000, output_tokens=20_000))  # ~$0.60
+
+    ask = metered(model, price=price)
+    with safety_context(PermissionSet.allow_all(), cost_budget=budget):
+        ask("first")
+        assert round(budget.spent, 4) == 0.60
+        with pytest.raises(CostBudgetExceeded):
+            ask("second")          # another $0.60 -> over $1.00
+
+
+def test_safely_usd_caps_spend():
+    price = Price(input=3.0, output=15.0)
+
+    def model(_):
+        return NS(usage=NS(input_tokens=500_000, output_tokens=500_000))  # $9
+
+    ask = metered(model, price=price)
+    with safely(allow="*", usd=5.00):
+        with pytest.raises(CostBudgetExceeded):
+            ask("x")               # $9 > $5
+
+
+def test_no_price_means_no_cost_charge():
+    budget = CostBudget(0.01)      # tiny, would trip if cost were charged
+
+    def model(_):
+        return NS(usage=NS(input_tokens=1_000_000, output_tokens=1_000_000))
+
+    ask = metered(model)           # no price -> tokens only, no cost
+    with safety_context(PermissionSet.allow_all(), cost_budget=budget):
+        ask("x")
+    assert budget.spent == 0.0
+
+
+def test_cost_budget_rejects_negative():
+    with pytest.raises(ValueError):
+        CostBudget(1.0).charge(-1.0)

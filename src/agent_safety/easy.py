@@ -37,6 +37,7 @@ Two things to know:
 ``clean_text=``      strip hidden/invisible characters from inputs
 ``no_repeats=``      stop after N identical calls (runaway loop)
 ``risk_budget=``     cap total *risk* (weight tools with ``@tool(..., risk=N)``)
+``usd=``             cap *money spent* in dollars (pair with ``metered(call, price=...)``)
 ``ask=``             ask before acting: ``True`` (console) or your own yes/no function
 ``explain=``         require a ``rationale="..."`` with each call
 ``rule=`` + ``judge=``   enforce a plain-English rule via a model judge
@@ -74,7 +75,7 @@ from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
 from .preview import PreviewGate
-from .quota import Quota, RiskBudget
+from .quota import CostBudget, Quota, RiskBudget
 from .reasoning import ReasoningGate
 
 _Names = Union[str, Iterable[str], None]
@@ -276,6 +277,7 @@ def safely(
     clean_text: bool = False,
     no_repeats: Optional[int] = None,
     risk_budget: Optional[int] = None,
+    usd: Optional[float] = None,
     ask: Union[bool, Callable[[ApprovalRequest], Any], None] = None,
     explain: Union[bool, str, Iterable[str], None] = None,
     rule: Union[str, Iterable[str], None] = None,
@@ -308,6 +310,7 @@ def safely(
         deadline=Deadline(seconds) if seconds else None,
         concurrency=_concurrency(at_most),
         risk_budget=RiskBudget(risk_budget) if risk_budget else None,
+        cost_budget=CostBudget(usd) if usd else None,
         input_guards=input_guards,
         output_guards=output_guards,
         loop_guard=LoopGuard(no_repeats) if no_repeats else None,

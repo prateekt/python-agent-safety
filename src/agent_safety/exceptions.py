@@ -143,6 +143,20 @@ class RiskBudgetExceeded(AgentSafetyError):
         super().__init__(f"risk budget exceeded: would reach {requested} but limit is {limit}")
 
 
+class CostBudgetExceeded(AgentSafetyError):
+    """Raised when cumulative spend exceeds a money budget (in USD).
+
+    Attributes:
+        limit: The budget, in dollars.
+        spent: Total spend that pushed it over (in dollars).
+    """
+
+    def __init__(self, limit: float, spent: float):
+        self.limit = limit
+        self.spent = spent
+        super().__init__(f"cost budget exceeded: spent ${spent:.4f} of a ${limit:.2f} budget")
+
+
 class ExplanationRequired(AgentSafetyError):
     """Raised when an agent invokes a gated tool without an adequate rationale.
 
