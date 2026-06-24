@@ -204,8 +204,30 @@ with safety_context(
     ...
 ```
 
-Report tokens from whatever your model's usage object gives you via
-`charge_tokens(...)`.
+**Token *and money* accounting, automatically.** Calls / rate / deadline / loops
+are charged for you at the tool boundary. The model round-trip is the one thing
+the library can't see (it never makes the call), so wrap that call once with
+`metered` and every request charges its own **call, tokens, and dollar cost** — no
+per-call reporting:
+
+Just say how much you're willing to spend — the cost per call is worked out for you
+from the response's tokens and the model's price, and calls stop when the budget runs out:
+
+```python
+from agent_safety import metered, safely
+
+ask = metered(client.messages.create, model="claude-opus-4-8")  # price from the table
+with safely(allow="...", budget="$100"):                         # "spend at most $100"
+    resp = ask(model="...", messages=[...])    # call + tokens + cost charged automatically;
+                                               # raises CostBudgetExceeded at $100 of spend
+```
+
+`metered` reads the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency).
+Name the model and the price comes from a small built-in table, or pass
+`price=Price(input=3.0, output=15.0)` ($ per 1M tokens) to set it yourself — an explicit
+price always wins, and an unknown model raises rather than silently billing $0. Omit
+both for tokens-only. (`budget=` also accepts a plain number; the price table is a dated
+convenience — verify against current provider pricing.)
 
 **Many agents at once.** Because the policy lives in a `contextvars.ContextVar`,
 every thread and every `asyncio` task automatically gets its *own* rules — so

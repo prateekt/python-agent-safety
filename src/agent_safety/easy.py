@@ -37,6 +37,7 @@ Two things to know:
 ``clean_text=``      strip hidden/invisible characters from inputs
 ``no_repeats=``      stop after N identical calls (runaway loop)
 ``risk_budget=``     cap total *risk* (weight tools with ``@tool(..., risk=N)``)
+``budget=``          cap *money spent*: ``budget="$100"`` (pair with ``metered(call, model=...)``)
 ``ask=``             ask before acting: ``True`` (console) or your own yes/no function
 ``explain=``         require a ``rationale="..."`` with each call
 ``rule=`` + ``judge=``   enforce a plain-English rule via a model judge
@@ -74,7 +75,7 @@ from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
 from .preview import PreviewGate
-from .quota import Quota, RiskBudget
+from .quota import CostBudget, Quota, RiskBudget
 from .reasoning import ReasoningGate
 
 _Names = Union[str, Iterable[str], None]
@@ -167,6 +168,21 @@ def _as_list(value: _Names) -> List[str]:
     if isinstance(value, str):
         return [value]
     return [str(v) for v in value]
+
+
+def _money(value: Union[str, float, int]) -> float:
+    """Parse a dollar amount: ``'$100'``, ``'$1,000.50'``, ``100``, ``100.0``."""
+    if isinstance(value, bool):  # guard: bool is an int subclass
+        raise TypeError("budget= must be a dollar amount, not a bool")
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().lstrip("$").replace(",", "").strip()
+    try:
+        return float(text)
+    except ValueError:
+        raise ValueError(
+            f"budget= must be a dollar amount like '$100' or 100.0, got {value!r}"
+        ) from None
 
 
 def _permissions(allow: _Names, deny: _Names) -> Optional[PermissionSet]:
@@ -276,6 +292,7 @@ def safely(
     clean_text: bool = False,
     no_repeats: Optional[int] = None,
     risk_budget: Optional[int] = None,
+    budget: Union[str, float, None] = None,
     ask: Union[bool, Callable[[ApprovalRequest], Any], None] = None,
     explain: Union[bool, str, Iterable[str], None] = None,
     rule: Union[str, Iterable[str], None] = None,
@@ -308,6 +325,7 @@ def safely(
         deadline=Deadline(seconds) if seconds else None,
         concurrency=_concurrency(at_most),
         risk_budget=RiskBudget(risk_budget) if risk_budget else None,
+        cost_budget=CostBudget(_money(budget)) if budget is not None else None,
         input_guards=input_guards,
         output_guards=output_guards,
         loop_guard=LoopGuard(no_repeats) if no_repeats else None,

@@ -32,7 +32,7 @@ from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .permissions import PermissionSet
 from .policy import Policy
 from .preview import PreviewGate
-from .quota import Quota, RiskBudget
+from .quota import CostBudget, Quota, RiskBudget
 from .reasoning import ReasoningGate
 
 _T = TypeVar("_T")
@@ -103,6 +103,15 @@ def charge_tokens(n: int) -> None:
     current_policy().charge_tokens(n)
 
 
+def charge_cost(amount: float) -> None:
+    """Charge *amount* dollars against every cost budget in the active context.
+
+    Usually called for you by :func:`~agent_safety.usage.charge_usage` /
+    :func:`~agent_safety.usage.metered` from a model response and a price.
+    """
+    current_policy().charge_cost(amount)
+
+
 @contextmanager
 def safety_context(
     permissions: Optional[PermissionSet] = None,
@@ -116,6 +125,7 @@ def safety_context(
     deadline: Union[Deadline, Iterable[Deadline], None] = None,
     concurrency: Union[ConcurrencyLimit, Iterable[ConcurrencyLimit], None] = None,
     risk_budget: Union[RiskBudget, Iterable[RiskBudget], None] = None,
+    cost_budget: Union[CostBudget, Iterable[CostBudget], None] = None,
     loop_guard: Union[LoopGuard, Iterable[LoopGuard], None] = None,
     approval: Union[ApprovalGate, Iterable[ApprovalGate], None] = None,
     reasoning: Union[ReasoningGate, Iterable[ReasoningGate], None] = None,
@@ -182,6 +192,7 @@ def safety_context(
             deadlines=policy.deadlines,
             concurrency_limits=policy.concurrency_limits,
             risk_budgets=policy.risk_budgets,
+            cost_budgets=policy.cost_budgets,
             loop_guards=policy.loop_guards,
             approvals=policy.approvals,
             reasonings=policy.reasonings,
@@ -201,6 +212,7 @@ def safety_context(
         deadlines=_as_tuple(deadline, Deadline),
         concurrency_limits=_as_tuple(concurrency, ConcurrencyLimit),
         risk_budgets=_as_tuple(risk_budget, RiskBudget),
+        cost_budgets=_as_tuple(cost_budget, CostBudget),
         loop_guards=_as_tuple(loop_guard, LoopGuard),
         approvals=_as_tuple(approval, ApprovalGate),
         reasonings=_as_tuple(reasoning, ReasoningGate),

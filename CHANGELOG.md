@@ -5,6 +5,24 @@ All notable changes to `agent_safety` are documented here. The format follows
 [Semantic Versioning](https://semver.org/) from 1.0 onward (pre-1.0, minor
 versions may include additive API changes).
 
+## [0.9.0]
+
+### Added
+- **Automatic token & cost accounting** so you barely report anything: `metered(fn)`
+  wraps a model-call function (sync or async) so every call charges itself — the
+  call against the quota / rate limit / deadline, the response's tokens against the
+  token budget, and, with a `Price`, the **dollar cost** against a money budget.
+- **Money budget**: say the dollar amount and the rest is worked out —
+  `safely(budget="$100")` (accepts `"$100"`, `"$1,000.50"`, or a number) caps spend
+  and raises `CostBudgetExceeded`. `metered(call, model="claude-opus-4-8")` prices the
+  call from a small built-in table (`price_for`, `agent_safety.prices`); an explicit
+  `price=Price(input=…, output=…)` ($ per 1M tokens) always wins, and an unknown model
+  raises rather than silently billing $0.
+- `extract_usage(response)` returns the input/output/total token split duck-typed from
+  the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency). Also
+  `CostBudget(max_usd)`, `charge_usage(response, price=…)`, `charge_cost(amount)`,
+  `extract_tokens`, `TokenUsage`.
+
 ## [Unreleased]
 
 ### Added
