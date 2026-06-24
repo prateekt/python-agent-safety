@@ -101,9 +101,10 @@ from .sandbox import NetworkAllowlist, PathBoundary
 from .schema import Param, tool_description, tool_schema
 from .tracing import current_span, trace_span
 from .transaction import Transaction, async_rollback, rollback
+from .usage import charge_usage, extract_tokens, metered
 from .validation import validate_args
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     # the easy front door (start here)
@@ -121,6 +122,10 @@ __all__ = [
     "check_output",
     "charge_call",
     "charge_tokens",
+    # automatic token accounting
+    "metered",
+    "charge_usage",
+    "extract_tokens",
     # permissions / policy
     "PermissionSet",
     "Policy",

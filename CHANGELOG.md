@@ -5,6 +5,16 @@ All notable changes to `agent_safety` are documented here. The format follows
 [Semantic Versioning](https://semver.org/) from 1.0 onward (pre-1.0, minor
 versions may include additive API changes).
 
+## [0.9.0]
+
+### Added
+- **Automatic token accounting** so you barely report anything: `metered(fn)`
+  wraps a model-call function (sync or async) so every call charges itself — the
+  call against the quota / rate limit / deadline, and the response's tokens against
+  the token budget. `charge_usage(response)` does the same in one line if you call
+  the model yourself, and `extract_tokens(response)` duck-types the count from the
+  Gemini / OpenAI / Anthropic usage shapes (object or dict, no SDK dependency).
+
 ## [Unreleased]
 
 ### Added

@@ -204,8 +204,22 @@ with safety_context(
     ...
 ```
 
-Report tokens from whatever your model's usage object gives you via
-`charge_tokens(...)`.
+**Token accounting, automatically.** Calls / rate / deadline / loops are charged
+for you at the tool boundary. Tokens are the one thing the library can't see
+(it never makes the model call), so wrap that call once with `metered` and every
+request charges its own tokens — no per-call reporting:
+
+```python
+from agent_safety import metered
+
+ask = metered(client.messages.create)        # any provider's call; sync or async
+with safely(allow="...", calls=100, tokens=200_000):
+    resp = ask(model="...", messages=[...])   # the call AND its tokens are charged
+```
+
+`metered` understands the Gemini / OpenAI / Anthropic usage shapes (no SDK
+dependency). If you call the model yourself, `charge_usage(resp)` does the same in
+one line; for anything exotic, fall back to `charge_tokens(n)`.
 
 **Many agents at once.** Because the policy lives in a `contextvars.ContextVar`,
 every thread and every `asyncio` task automatically gets its *own* rules — so
