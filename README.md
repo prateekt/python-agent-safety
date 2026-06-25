@@ -490,6 +490,59 @@ back to the model instead of crashing your loop. Wrap the loop in a
 `safety_context` and the same least-privilege, redaction, quota, and audit apply
 no matter which model is driving.
 
+## Multimodal example: a fully-constrained Gemini PDF reader
+
+A real end-to-end agent: read a PDF straight into Gemini (multimodal) and answer a
+prompt, under the full resource envelope. The `@tool` makes the *content* guards
+apply on top of the budgets; `metered` charges the call's tokens and cost. Every
+limit raises a subclass of `AgentSafetyError`, so one handler catches them all.
+
+```python
+from google import genai
+from google.genai import types
+import pathlib
+
+from agent_safety import metered, safely, tool, AgentSafetyError
+
+gemini = metered(genai.Client().models.generate_content)   # meter tokens + cost
+PROMPT = "Summarize this document and list its key points."
+
+@tool
+def ask_pdf(pdf_path: str, question: str) -> str:
+    pdf = pathlib.Path(pdf_path).read_bytes()
+    reply = gemini(
+        model="gemini-1.5-pro",
+        contents=[types.Part.from_bytes(data=pdf, mime_type="application/pdf"), question],
+    )
+    return reply.text
+
+try:
+    with safely(
+        allow=["ask_pdf"],           # only this capability may run; everything else denied
+        budget="$2.00",              # spend at most $2 on the model
+        calls=10,                    # call ceiling
+        tokens=1_000_000,            # token ceiling
+        per_minute=15,               # rate cap
+        seconds=120,                 # total runtime budget
+        timeout=60,                  # no single call may hang past 60s
+        memory="500MB",              # don't balloon on a big PDF
+        max_input=200_000,           # reject absurdly long prompts
+        block_injections=True,       # reject "ignore previous instructions"-style input
+        clean_text=True,             # strip hidden/invisible unicode from inputs
+        hide_secrets=True,           # scrub emails / keys / secrets from the answer
+        no_repeats=3,                # circuit-breaker on identical repeated calls
+        log=True,                    # print an audit line for every decision
+    ):
+        print(ask_pdf("document.pdf", PROMPT))
+except AgentSafetyError as e:
+    print(f"Blocked by a safety limit: {e}")   # one base class catches every constraint
+```
+
+The model is named once (in the call — `metered` reads it and prices it), and the
+whole envelope is enforced for you. Need different behavior per limit? Split one
+case out (`except RateLimitExceeded: ...`) and keep `AgentSafetyError` as the
+catch-all.
+
 ## Run it
 
 ```bash
@@ -503,7 +556,7 @@ python examples/hardening.py       # sandbox + limits + approval + reasoning + r
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
 python examples/benchmark.py       # per-call overhead on your machine
 python benchmarks/attack_suite.py  # the attack scorecard (what's contained)
-python -m pytest                   # 242 tests (incl. the CI-gated attack suite)
+python -m pytest                   # 301 tests (incl. the CI-gated attack suite)
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
