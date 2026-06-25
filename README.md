@@ -189,9 +189,33 @@ tighter but never looser):
 | `Quota(max_calls=…, max_tokens=…)` | the **total** calls/tokens an agent may spend |
 | `RateLimit(per_second=5)` | a **sliding-window** burst cap (also `per_minute=`, or `max_calls=/per_seconds=`) |
 | `Deadline(seconds=30)` | a **wall-clock** budget, timed from the first action |
+| `safely(timeout=20)` | a **per-call** hard limit — stops any single call that hangs or deadlocks |
+| `safely(memory="500MB")` | a **memory** guardrail — caps Python-heap growth inside the block |
 | `ConcurrencyLimit(4)` | most tool calls running **at once** — share one across agents to cap them together |
 | `RiskBudget(20)` | spend **danger**, not calls — weight tools with `@tool(..., risk=N)` and cap the total |
 | `LoopGuard(max_identical=3)` | a **circuit breaker** for an agent stuck repeating one tool with the same args |
+
+The whole resource envelope of a run, in one block — set the parameters, the block
+enforces them on every agent call inside:
+
+```python
+with safely(
+    allow=["search", "fs.read"],   # what the agent may do
+    calls=200, tokens=500_000,     # how much it may spend
+    budget="$20",                  # …in dollars (with metered(...))
+    per_second=5,                  # how fast
+    seconds=120,                   # total runtime
+    timeout=20,                    # no single call hangs past 20s
+    memory="500MB",                # don't balloon memory
+):
+    run_agent()                    # everything above is enforced automatically
+```
+
+`timeout` interrupts a hung call (async: cancels the coroutine; sync: a `SIGALRM`
+timer on Unix, else a worker thread that's abandoned on timeout). `memory` is a
+Python-heap guardrail measured between calls — a useful brake on runaway allocation,
+not a hard OS sandbox (it tracks Python objects, not C-level buffers; for hard
+isolation use the OS/container). Both raise (`TimeoutExceeded` / `MemoryBudgetExceeded`).
 
 ```python
 with safety_context(
@@ -216,18 +240,25 @@ from the response's tokens and the model's price, and calls stop when the budget
 ```python
 from agent_safety import metered, safely
 
-ask = metered(client.messages.create, model="claude-opus-4-8")  # price from the table
-with safely(allow="...", budget="$100"):                         # "spend at most $100"
-    resp = ask(model="...", messages=[...])    # call + tokens + cost charged automatically;
-                                               # raises CostBudgetExceeded at $100 of spend
+ask = metered(client.messages.create)          # wrap once — nothing else to repeat
+with safely(allow="...", budget="$100"):        # "spend at most $100"
+    resp = ask(model="claude-opus-4-8",         # the model is named here, once...
+               messages=[...])                  # ...and priced from it automatically;
+                                                # raises CostBudgetExceeded at $100 of spend
 ```
 
-`metered` reads the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency).
-Name the model and the price comes from a small built-in table, or pass
-`price=Price(input=3.0, output=15.0)` ($ per 1M tokens) to set it yourself — an explicit
-price always wins, and an unknown model raises rather than silently billing $0. Omit
-both for tokens-only. (`budget=` also accepts a plain number; the price table is a dated
-convenience — verify against current provider pricing.)
+You name the model **once**, in the call you're already making — `metered` reads
+`model=` from each call (OpenAI / Anthropic) and prices it from the built-in table,
+so the same wrapper prices mixed models correctly. (Gemini binds the model to the
+client, so name it once there: `metered(gm.generate_content, model="gemini-1.5-pro")`.)
+An explicit `price=Price(input=3.0, output=15.0)` ($ per 1M tokens) overrides the table.
+
+`metered` reads the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency),
+including **cache-read / cache-write tokens** (priced separately, since cached input
+is much cheaper) and **streaming** responses (it charges once the stream is consumed).
+An unknown model is tokens-only — except when a `budget=` is active, where it asks for
+an explicit `price=` rather than letting the budget silently do nothing. (The price
+table is a dated convenience — verify against current provider pricing.)
 
 **Many agents at once.** Because the policy lives in a `contextvars.ContextVar`,
 every thread and every `asyncio` task automatically gets its *own* rules — so
@@ -487,8 +518,11 @@ src/agent_safety/
   permissions.py   PermissionSet — capability allow/deny + intersect (+ to_dict/from_dict)
   guards.py        Stage, Guard protocol, content + security guards (Secret/Unicode)
   sandbox.py       PathBoundary, NetworkAllowlist — filesystem/SSRF resource guards
-  quota.py         Quota (call/token budgets) + RiskBudget (per-action risk)
+  quota.py         Quota (call/token budgets) + RiskBudget + CostBudget (money)
   limits.py        RateLimit + Deadline + ConcurrencyLimit + LoopGuard
+  runtime.py       per-call timeout (no hangups) helpers
+  usage.py         metered / charge_usage / Price — automatic token & cost metering
+  prices.py        built-in model price table (price_for)
   action.py        Action — the one object every safety hook (approver/judge/...) receives
   approval.py      ApprovalGate — human-in-the-loop gating
   preview.py       PreviewGate — approve a tool's "what would this do?" preview

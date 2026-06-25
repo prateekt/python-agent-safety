@@ -8,6 +8,14 @@ versions may include additive API changes).
 ## [0.9.0]
 
 ### Added
+- **`timeout=` — no hangups.** A hard per-call limit so no single call can hang or
+  deadlock: async calls are cancelled via `asyncio.wait_for`; sync calls use a
+  `SIGALRM` timer (Unix main thread) or an abandoned worker thread otherwise. Raises
+  `TimeoutExceeded`. Complements the cumulative `seconds=` / `Deadline` budget.
+- **`memory="500MB"` — a RAM guardrail.** Caps Python-heap growth within the block
+  (measured via `tracemalloc` as growth since entry, checked at each call boundary).
+  Raises `MemoryBudgetExceeded`. Honest scope: it tracks Python allocations, not
+  C-level buffers — a brake on runaway allocation, not a hard OS sandbox.
 - **Automatic token & cost accounting** so you barely report anything: `metered(fn)`
   wraps a model-call function (sync or async) so every call charges itself — the
   call against the quota / rate limit / deadline, the response's tokens against the
@@ -22,6 +30,22 @@ versions may include additive API changes).
   the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency). Also
   `CostBudget(max_usd)`, `charge_usage(response, price=…)`, `charge_cost(amount)`,
   `extract_tokens`, `TokenUsage`.
+- **Cache-token accuracy**: `TokenUsage` / `Price` now have separate `cached` (cache
+  read) and `cache_write` buckets, normalized correctly whether a provider reports
+  them additively (Anthropic) or as a subset of the prompt (OpenAI
+  `prompt_tokens_details.cached_tokens`, Gemini `cached_content_token_count`). The
+  built-in table prices them per provider (Anthropic ~0.1×/1.25× input, OpenAI ~0.5×,
+  Gemini ~0.25×), so cache-heavy agents are billed accurately instead of at full input
+  price.
+- **Streaming**: `metered` detects a sync or async stream of chunks and charges usage
+  once it's consumed (merging cumulative/split per-chunk usage), so streamed model
+  calls are metered too.
+- **No double-spec**: `metered` reads `model=` from each call (OpenAI / Anthropic) and
+  prices it automatically, so you name the model once — in the call you already make,
+  not again on the wrapper. The same wrapper prices mixed models correctly; an explicit
+  `price=`/`model=` still overrides. Unknown auto-detected models are tokens-only, except
+  when a money budget is active (then `metered` asks for an explicit `price=` rather than
+  letting the budget silently do nothing).
 
 ## [Unreleased]
 

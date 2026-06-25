@@ -64,11 +64,13 @@ from .exceptions import (
     GuardViolation,
     HoneytokenTripped,
     LoopDetected,
+    MemoryBudgetExceeded,
     PermissionDenied,
     QuotaExceeded,
     RateLimitExceeded,
     RiskBudgetExceeded,
     RollbackError,
+    TimeoutExceeded,
 )
 from .guards import (
     Compose,
@@ -221,4 +223,6 @@ __all__ = [
     "HoneytokenTripped",
     "RiskBudgetExceeded",
     "CostBudgetExceeded",
+    "TimeoutExceeded",
+    "MemoryBudgetExceeded",
 ]

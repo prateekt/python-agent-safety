@@ -211,11 +211,15 @@ def test_money_rejects_garbage():
 
 # -- built-in price table -------------------------------------------------
 
+def _io(p):
+    return (p.input, p.output)
+
+
 def test_price_for_known_models():
-    assert price_for("claude-opus-4-8-20260514") == Price(15.0, 75.0)
-    assert price_for("gpt-4o-mini") == Price(0.15, 0.60)
-    assert price_for("gpt-4o") == Price(2.50, 10.0)           # not shadowed by -mini
-    assert price_for("gemini-1.5-flash-002") == Price(0.075, 0.30)
+    assert _io(price_for("claude-opus-4-8-20260514")) == (15.0, 75.0)
+    assert _io(price_for("gpt-4o-mini")) == (0.15, 0.60)
+    assert _io(price_for("gpt-4o")) == (2.50, 10.0)           # not shadowed by -mini
+    assert _io(price_for("gemini-1.5-flash-002")) == (0.075, 0.30)
 
 
 def test_price_for_unknown_raises():
@@ -243,4 +247,160 @@ def test_metered_explicit_price_beats_model():
     budget = CostBudget(100.0)
     with safety_context(PermissionSet.allow_all(), cost_budget=budget):
         ask("x")                   # uses explicit $1/Mtok, not opus $15
+    assert round(budget.spent, 4) == 1.0
+
+
+# -- cached / cache-write token buckets -----------------------------------
+
+def test_cache_anthropic_additive():
+    # Anthropic reports cache tokens SEPARATELY from input_tokens
+    u = extract_usage(NS(usage=NS(
+        input_tokens=200, output_tokens=50,
+        cache_read_input_tokens=800, cache_creation_input_tokens=1000)))
+    assert (u.input, u.output, u.cached, u.cache_write) == (200, 50, 800, 1000)
+    assert u.total == 2050          # all four buckets
+
+
+def test_cache_openai_subset_carved_from_input():
+    # OpenAI cached_tokens is a SUBSET of prompt_tokens (nested in details)
+    u = extract_usage(NS(usage=NS(
+        prompt_tokens=1000, completion_tokens=50, total_tokens=1050,
+        prompt_tokens_details=NS(cached_tokens=800))))
+    assert (u.input, u.cached, u.output) == (200, 800, 50)   # input carved down
+    assert u.total == 1050
+
+
+def test_cache_gemini_subset():
+    u = extract_usage(NS(usage_metadata=NS(
+        prompt_token_count=1000, candidates_token_count=300,
+        total_token_count=1300, cached_content_token_count=600)))
+    assert (u.input, u.cached, u.output) == (400, 600, 300)
+
+
+def test_cache_aware_pricing():
+    p = price_for("claude-opus-4-8")            # $15/$75, cached 1.5, write 18.75
+    assert (p.cached, p.cache_write) == (1.5, 18.75)
+    u = extract_usage(NS(usage=NS(
+        input_tokens=200, output_tokens=50,
+        cache_read_input_tokens=800, cache_creation_input_tokens=1000)))
+    expected = (200 * 15 + 800 * 1.5 + 1000 * 18.75 + 50 * 75) / 1_000_000
+    assert abs(p.cost(u) - expected) < 1e-9
+
+
+def test_price_cached_defaults_to_input_rate():
+    # unset cache rates => conservative full input rate (never under-charges)
+    p = Price(input=10.0, output=20.0)
+    u = extract_usage(NS(usage=NS(input_tokens=0, output_tokens=0,
+                                  cache_read_input_tokens=1_000_000)))
+    assert p.cost(u) == 10.0
+
+
+# -- streaming responses --------------------------------------------------
+
+def test_metered_sync_stream_charges_on_consume():
+    def stream_call(_):
+        return iter([                       # usage only on the final chunk (OpenAI-style)
+            NS(usage=None, text="a"),
+            NS(usage=None, text="b"),
+            NS(usage=NS(prompt_tokens=100, completion_tokens=20, total_tokens=120)),
+        ])
+
+    ask = metered(stream_call, model="gpt-4o")
+    q = Quota(max_calls=5, max_tokens=1000)
+    with safety_context(PermissionSet.allow_all(), quota=q):
+        chunks = list(ask("hi"))            # consume inside the block
+    assert len(chunks) == 3
+    assert q.calls_used == 1
+    assert q.tokens_used == 120
+
+
+def test_metered_async_stream_merges_split_usage():
+    # Anthropic-style: input in the first event, output grows across deltas
+    async def astream(_):
+        async def gen():
+            yield NS(usage=NS(input_tokens=500, output_tokens=1))
+            yield NS(usage=NS(output_tokens=10))
+            yield NS(usage=NS(output_tokens=42))
+        return gen()
+
+    ask = metered(astream)
+
+    async def run():
+        q = Quota(max_tokens=1000)
+        with safety_context(quota=q):
+            chunks = [c async for c in await ask("x")]
+            return len(chunks), q.tokens_used
+
+    assert asyncio.run(run()) == (3, 542)   # 500 input + 42 output (max-merged)
+
+
+def test_metered_stream_with_no_usage_charges_nothing():
+    def stream_call(_):
+        return iter([NS(text="a"), NS(text="b")])   # no usage anywhere
+
+    ask = metered(stream_call)
+    q = Quota(max_calls=5, max_tokens=1000)
+    with safety_context(PermissionSet.allow_all(), quota=q):
+        list(ask("hi"))
+    assert q.calls_used == 1
+    assert q.tokens_used == 0
+
+
+# -- model named once: auto-detected from the call ------------------------
+
+def test_metered_autodetects_model_from_call():
+    # no model/price on the wrapper; read model= from the call (OpenAI/Anthropic)
+    def create(model, messages):
+        return NS(usage=NS(prompt_tokens=1_000_000, completion_tokens=0, total_tokens=1_000_000))
+
+    ask = metered(create)
+    budget = CostBudget(20.0)
+    with safety_context(PermissionSet.allow_all(), cost_budget=budget):
+        ask(model="claude-opus-4-8", messages=[])   # opus input $15/Mtok
+    assert round(budget.spent, 2) == 15.00
+
+
+def test_metered_same_wrapper_prices_mixed_models():
+    def create(model, messages):
+        return NS(usage=NS(prompt_tokens=1_000_000, completion_tokens=0, total_tokens=1_000_000))
+
+    ask = metered(create)
+    b1, b2 = CostBudget(100.0), CostBudget(100.0)
+    with safety_context(PermissionSet.allow_all(), cost_budget=b1):
+        ask(model="claude-opus-4-8", messages=[])    # $15
+    with safety_context(PermissionSet.allow_all(), cost_budget=b2):
+        ask(model="gpt-4o-mini", messages=[])         # $0.15
+    assert round(b1.spent, 2) == 15.00
+    assert round(b2.spent, 4) == 0.15
+
+
+def test_metered_unknown_model_with_budget_refuses():
+    def create(model, messages):
+        return NS(usage=NS(total_tokens=10))
+
+    ask = metered(create)
+    with safety_context(PermissionSet.allow_all(), cost_budget=CostBudget(10.0)):
+        with pytest.raises(ValueError):
+            ask(model="my-private-finetune-v3", messages=[])   # would silently bypass budget
+
+
+def test_metered_unknown_model_without_budget_is_tokens_only():
+    def create(model, messages):
+        return NS(usage=NS(total_tokens=1_000_000))
+
+    ask = metered(create)
+    q = Quota(max_tokens=5_000_000)
+    with safety_context(PermissionSet.allow_all(), quota=q):
+        ask(model="my-private-finetune-v3", messages=[])       # no budget -> no error
+    assert q.tokens_used == 1_000_000
+
+
+def test_metered_explicit_price_overrides_call_model():
+    def create(model, messages):
+        return NS(usage=NS(prompt_tokens=1_000_000, completion_tokens=0))
+
+    ask = metered(create, price=Price(input=1.0, output=1.0))   # explicit wins
+    budget = CostBudget(100.0)
+    with safety_context(PermissionSet.allow_all(), cost_budget=budget):
+        ask(model="claude-opus-4-8", messages=[])               # ignores opus $15
     assert round(budget.spent, 4) == 1.0

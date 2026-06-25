@@ -39,6 +39,7 @@ from .context import current_policy
 from .guards import Guard, Stage, run_guards
 from .policy import Policy
 from .reasoning import RATIONALE_KWARG, ReasoningRequest
+from .runtime import acall_with_timeout, call_with_timeout
 
 F = TypeVar("F", bound=Callable[..., object])
 AF = TypeVar("AF", bound=Callable[..., Awaitable[object]])
@@ -189,6 +190,7 @@ def guarded_tool(
                 policy.note_monitor(capability)
                 return func(*args, **_strip_rationale(policy, capability, kwargs))
             policy.charge_call()
+            policy.check_memory()
             policy.require(capability)
             policy.charge_risk(risk)
             rationale, kwargs = _extract_reasoning(policy, capability, tool, args, kwargs)
@@ -205,7 +207,7 @@ def guarded_tool(
                 return _exit(policy, extra_out, cache[key])
             gargs, gkwargs = _guard_inputs(policy, capability, tool, extra_in, args, kwargs)
             with _hold_concurrency(policy):
-                result = func(*gargs, **gkwargs)
+                result = call_with_timeout(func, gargs, gkwargs, policy.timeout)
             if cache is not None:
                 _cache_put(cache, order, key, result)
             return _exit(policy, extra_out, result)
@@ -246,6 +248,7 @@ def guarded_async_tool(
                 policy.note_monitor(capability)
                 return await func(*args, **_strip_rationale(policy, capability, kwargs))
             policy.charge_call()
+            policy.check_memory()
             policy.require(capability)
             policy.charge_risk(risk)
             rationale, kwargs = _extract_reasoning(policy, capability, tool, args, kwargs)
@@ -262,7 +265,7 @@ def guarded_async_tool(
                 return _exit(policy, extra_out, cache[key])
             gargs, gkwargs = _guard_inputs(policy, capability, tool, extra_in, args, kwargs)
             async with _hold_concurrency_async(policy):
-                result = await func(*gargs, **gkwargs)
+                result = await acall_with_timeout(func, gargs, gkwargs, policy.timeout)
             if cache is not None:
                 _cache_put(cache, order, key, result)
             return _exit(policy, extra_out, result)
