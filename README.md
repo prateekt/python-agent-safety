@@ -490,6 +490,32 @@ back to the model instead of crashing your loop. Wrap the loop in a
 `safety_context` and the same least-privilege, redaction, quota, and audit apply
 no matter which model is driving.
 
+## Govern MCP servers too
+
+[MCP](https://modelcontextprotocol.io) tools live on the *other side* of a session,
+so `guard_mcp(session)` wraps the **session**: every `call_tool` runs through the
+active `safely(...)` policy — permission-checked, budget-counted, input-guarded, and
+audited — *before* it reaches the server. No MCP SDK dependency (it's duck-typed
+against `async call_tool(name, arguments)`, so a stand-in or the real client both work).
+
+```python
+from agent_safety import safely, guard_mcp
+
+safe = guard_mcp(session)            # wrap any MCP client session
+
+with safely(allow=["search", "fs.read"], calls=20, per_minute=15, hide_secrets=True):
+    result = await safe.call_tool("search", {"q": "agent safety"})
+    # not in allow= -> PermissionDenied; budgets + input guards + audit all apply
+```
+
+A tool's MCP name is its capability by default (so `allow="search"` governs the
+`search` tool); pass `capability=` to remap. Every **policy-level** gate applies —
+permission, quota / rate / deadline, approval, constitutional rules, loop detection,
+concurrency, input guards, audit; the per-*tool*-decorator extras (risk weight,
+preview, idempotency, reasoning) have no MCP analogue. Output scrubbing is best-effort
+on plain-string results — redact structured server payloads yourself. Runnable demo:
+[`examples/mcp_agent.py`](examples/mcp_agent.py).
+
 ## Multimodal example: a fully-constrained Gemini PDF reader
 
 A real end-to-end agent: read a PDF straight into Gemini (multimodal) and answer a
@@ -554,6 +580,7 @@ python examples/multi_agent.py     # two agents, different powers, a shared conc
 python examples/quickstart.py      # narrated single-provider walkthrough
 python examples/hardening.py       # sandbox + limits + approval + reasoning + rollback
 python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
+python examples/mcp_agent.py       # govern an MCP server's tools with safely(...)
 python examples/benchmark.py       # per-call overhead on your machine
 python benchmarks/attack_suite.py  # the attack scorecard (what's contained)
 python -m pytest                   # 301 tests (incl. the CI-gated attack suite)
