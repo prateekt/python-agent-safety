@@ -20,6 +20,7 @@ it was not given. When the block exits, the broader policy returns.
 from __future__ import annotations
 
 import contextvars
+import tracemalloc
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Iterable, Iterator, Optional, Tuple, TypeVar, Union
@@ -45,6 +46,16 @@ def _as_tuple(value: Union[_T, Iterable[_T], None], cls: type) -> Tuple[_T, ...]
     if isinstance(value, cls):
         return (value,)  # type: ignore[return-value]
     return tuple(value)  # type: ignore[arg-type]
+
+
+_N = TypeVar("_N", int, float)
+
+
+def _tighter(current: Optional[_N], candidate: Optional[_N]) -> Optional[_N]:
+    """The stricter (smaller) of two optional limits — the one-way ratchet for
+    scalar limits like ``timeout`` and ``memory``."""
+    present = [v for v in (current, candidate) if v is not None]
+    return min(present) if present else None
 
 # The root sentinel. Outside any ``safety_context`` the effective policy is
 # deny-all, so stray agent code that forgot to establish a context fails safe.
@@ -131,6 +142,8 @@ def safety_context(
     reasoning: Union[ReasoningGate, Iterable[ReasoningGate], None] = None,
     constitution: Union[ConstitutionGate, Iterable[ConstitutionGate], None] = None,
     preview: Union[PreviewGate, Iterable[PreviewGate], None] = None,
+    timeout: Optional[float] = None,
+    memory: Optional[int] = None,
     enforce: Optional[bool] = None,
     audit: Iterable[AuditSink] = (),
 ) -> Iterator[Policy]:
@@ -224,8 +237,23 @@ def safety_context(
     # monitor -> enforce, never enforce -> monitor.
     if not top_level and enforce is not None:
         effective = replace(effective, enforce=(outer.enforce or enforce))
+    # Per-call timeout and memory budget are scalar limits that can only tighten.
+    effective = replace(
+        effective,
+        timeout=_tighter(effective.timeout, timeout),
+        memory_limit=_tighter(effective.memory_limit, memory),
+    )
+    started_tracing = False
+    if effective.memory_limit is not None:
+        if not tracemalloc.is_tracing():
+            tracemalloc.start()
+            started_tracing = True
+        baseline, _peak = tracemalloc.get_traced_memory()
+        effective = replace(effective, memory_baseline=baseline)
     token = _current.set(effective)
     try:
         yield effective
     finally:
         _current.reset(token)
+        if started_tracing:
+            tracemalloc.stop()

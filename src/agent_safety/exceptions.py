@@ -157,6 +157,34 @@ class CostBudgetExceeded(AgentSafetyError):
         super().__init__(f"cost budget exceeded: spent ${spent:.4f} of a ${limit:.2f} budget")
 
 
+class TimeoutExceeded(AgentSafetyError):
+    """Raised when a single guarded call runs longer than its ``timeout``.
+
+    Attributes:
+        seconds: The per-call timeout that was exceeded.
+    """
+
+    def __init__(self, seconds: float):
+        self.seconds = seconds
+        super().__init__(f"call exceeded its {seconds}s timeout")
+
+
+class MemoryBudgetExceeded(AgentSafetyError):
+    """Raised when a block's Python-heap growth exceeds its ``memory`` budget.
+
+    Attributes:
+        limit: The memory budget, in bytes.
+        used: Bytes allocated within the block when it tripped.
+    """
+
+    def __init__(self, limit: int, used: int):
+        self.limit = limit
+        self.used = used
+        super().__init__(
+            f"memory budget exceeded: used {used:,} bytes of a {limit:,}-byte budget"
+        )
+
+
 class ExplanationRequired(AgentSafetyError):
     """Raised when an agent invokes a gated tool without an adequate rationale.
 

@@ -18,6 +18,7 @@ grant new capabilities. That one-way ratchet is what the ``with`` context relies
 from __future__ import annotations
 
 import inspect
+import tracemalloc
 from dataclasses import dataclass, field, replace
 from typing import Iterable, Optional, Tuple
 
@@ -31,6 +32,7 @@ from .exceptions import (
     DeadlineExceeded,
     ExplanationRequired,
     LoopDetected,
+    MemoryBudgetExceeded,
     PermissionDenied,
     RateLimitExceeded,
     RiskBudgetExceeded,
@@ -80,6 +82,11 @@ class Policy:
     # When False the policy is in *monitor* (dry-run) mode: guarded tool calls
     # are not blocked, but a would-be permission denial is recorded to audit.
     enforce: bool = True
+    # Per-call hard timeout (seconds) so no single call hangs; Python-heap budget
+    # (bytes) measured as growth since the block was entered.
+    timeout: Optional[float] = None
+    memory_limit: Optional[int] = None
+    memory_baseline: int = 0
 
     # -- audit ------------------------------------------------------------
     def audit(self, event: AuditEvent) -> None:
@@ -178,6 +185,17 @@ class Policy:
                 self.audit(AuditEvent("cost", "deny", detail=f"${amount:.4f}"))
                 raise
         self.audit(AuditEvent("cost", "charge", detail=f"${amount:.4f}"))
+
+    def check_memory(self) -> None:
+        """Raise :class:`MemoryBudgetExceeded` if Python-heap growth since the block
+        was entered exceeds ``memory_limit``. Checked at each tool boundary."""
+        if self.memory_limit is None or not tracemalloc.is_tracing():
+            return
+        current, _peak = tracemalloc.get_traced_memory()
+        used = current - self.memory_baseline
+        if used > self.memory_limit:
+            self.audit(AuditEvent("memory", "deny", detail=f"{used}>{self.memory_limit}"))
+            raise MemoryBudgetExceeded(self.memory_limit, used)
 
     # -- loop detection ---------------------------------------------------
     def check_loop(self, tool: str, signature: str) -> None:

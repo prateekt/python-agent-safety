@@ -27,7 +27,9 @@ Two things to know:
 ``calls=``           most tool calls allowed
 ``tokens=``          most model tokens allowed (you report them)
 ``per_second=``      most calls per second  (also ``per_minute=``)
-``seconds=``         a time budget, in seconds
+``seconds=``         a *total* time budget, in seconds
+``timeout=``         max seconds for any *single* call — stops hangs/deadlocks
+``memory=``          cap Python-heap growth in the block: ``memory="500MB"``
 ``at_most=``         most tool calls running at once (waits for a free slot)
 ``monitor=``         dry run: don't block anything, just log what *would* be blocked
 ``hide_secrets=``    scrub emails / keys / secrets out of results
@@ -185,6 +187,27 @@ def _money(value: Union[str, float, int]) -> float:
         ) from None
 
 
+_BYTE_UNITS = (("TB", 1024 ** 4), ("GB", 1024 ** 3), ("MB", 1024 ** 2), ("KB", 1024), ("B", 1))
+
+
+def _bytes(value: Union[str, int]) -> int:
+    """Parse a memory size: ``'500MB'``, ``'1GB'``, ``'512KB'``, or a byte count."""
+    if isinstance(value, bool):
+        raise TypeError("memory= must be a size, not a bool")
+    if isinstance(value, int):
+        return value
+    text = str(value).strip().upper().replace(" ", "")
+    for unit, multiplier in _BYTE_UNITS:
+        if text.endswith(unit):
+            return int(float(text[: -len(unit)]) * multiplier)
+    try:
+        return int(float(text))  # a bare number is bytes
+    except ValueError:
+        raise ValueError(
+            f"memory= must be a size like '500MB' or a byte count, got {value!r}"
+        ) from None
+
+
 def _permissions(allow: _Names, deny: _Names) -> Optional[PermissionSet]:
     allow_list = _as_list(allow)
     deny_list = _as_list(deny)
@@ -293,6 +316,8 @@ def safely(
     no_repeats: Optional[int] = None,
     risk_budget: Optional[int] = None,
     budget: Union[str, float, None] = None,
+    timeout: Optional[float] = None,
+    memory: Union[str, int, None] = None,
     ask: Union[bool, Callable[[ApprovalRequest], Any], None] = None,
     explain: Union[bool, str, Iterable[str], None] = None,
     rule: Union[str, Iterable[str], None] = None,
@@ -326,6 +351,8 @@ def safely(
         concurrency=_concurrency(at_most),
         risk_budget=RiskBudget(risk_budget) if risk_budget else None,
         cost_budget=CostBudget(_money(budget)) if budget is not None else None,
+        timeout=timeout,
+        memory=_bytes(memory) if memory is not None else None,
         input_guards=input_guards,
         output_guards=output_guards,
         loop_guard=LoopGuard(no_repeats) if no_repeats else None,

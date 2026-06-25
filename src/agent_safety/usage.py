@@ -37,7 +37,8 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Iterator, Mapping, Optional
 
-from .context import charge_call, charge_cost, charge_tokens, current_policy
+from .context import charge_cost, charge_tokens, current_policy
+from .runtime import acall_with_timeout, call_with_timeout
 
 
 @dataclass(frozen=True)
@@ -298,16 +299,22 @@ def metered(
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            policy = current_policy()
             call_price = _resolve_price(price, kwargs)
-            charge_call()
-            return _meter_result(await fn(*args, **kwargs), call_price)
+            policy.charge_call()
+            policy.check_memory()
+            result = await acall_with_timeout(fn, args, kwargs, policy.timeout)
+            return _meter_result(result, call_price)
 
         return async_wrapper
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        policy = current_policy()
         call_price = _resolve_price(price, kwargs)
-        charge_call()
-        return _meter_result(fn(*args, **kwargs), call_price)
+        policy.charge_call()
+        policy.check_memory()
+        result = call_with_timeout(fn, args, kwargs, policy.timeout)
+        return _meter_result(result, call_price)
 
     return wrapper

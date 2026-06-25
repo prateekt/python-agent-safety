@@ -8,6 +8,14 @@ versions may include additive API changes).
 ## [0.9.0]
 
 ### Added
+- **`timeout=` — no hangups.** A hard per-call limit so no single call can hang or
+  deadlock: async calls are cancelled via `asyncio.wait_for`; sync calls use a
+  `SIGALRM` timer (Unix main thread) or an abandoned worker thread otherwise. Raises
+  `TimeoutExceeded`. Complements the cumulative `seconds=` / `Deadline` budget.
+- **`memory="500MB"` — a RAM guardrail.** Caps Python-heap growth within the block
+  (measured via `tracemalloc` as growth since entry, checked at each call boundary).
+  Raises `MemoryBudgetExceeded`. Honest scope: it tracks Python allocations, not
+  C-level buffers — a brake on runaway allocation, not a hard OS sandbox.
 - **Automatic token & cost accounting** so you barely report anything: `metered(fn)`
   wraps a model-call function (sync or async) so every call charges itself — the
   call against the quota / rate limit / deadline, the response's tokens against the
