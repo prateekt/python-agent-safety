@@ -17,7 +17,7 @@ Matching is by substring, so versioned names (``claude-opus-4-8-20260514``) reso
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from .usage import Price
 
@@ -67,18 +67,27 @@ _PRICES: List[Tuple[str, Price]] = [
 ]
 
 
+def find_price(model: str) -> Optional[Price]:
+    """Look up the built-in :class:`Price` for *model* (substring match), or
+    ``None`` if it isn't known. Lenient — used for best-effort auto-detection."""
+    key = model.lower()
+    for substring, price in _PRICES:
+        if substring in key:
+            return price
+    return None
+
+
 def price_for(model: str) -> Price:
     """Look up the built-in :class:`Price` for *model* (substring match).
 
     Raises :class:`ValueError` if the model isn't known — pass an explicit
     ``price=Price(...)`` instead. Never returns a zero/guessed price.
     """
-    key = model.lower()
-    for substring, price in _PRICES:
-        if substring in key:
-            return price
-    known = ", ".join(sorted({s for s, _ in _PRICES}))
-    raise ValueError(
-        f"no built-in price for model {model!r}; pass price=Price(input=..., output=...) "
-        f"explicitly. Known prefixes: {known}"
-    )
+    price = find_price(model)
+    if price is None:
+        known = ", ".join(sorted({s for s, _ in _PRICES}))
+        raise ValueError(
+            f"no built-in price for model {model!r}; pass price=Price(input=..., output=...) "
+            f"explicitly. Known prefixes: {known}"
+        )
+    return price

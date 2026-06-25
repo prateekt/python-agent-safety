@@ -11,10 +11,10 @@ provider's response and call ``charge_tokens``" into one of:
   itself (the call, its tokens, and — with a price — the dollar cost) with
   **zero** per-call reporting.
 
-      ask = metered(client.messages.create,         # Anthropic, or any callable
-                    model="claude-opus-4-8")        # price from the built-in table
+      ask = metered(client.messages.create)         # wrap once — nothing to repeat
       with safely(allow="...", budget="$100"):       # "spend at most $100"
-          resp = ask(model="...", messages=[...])   # call + tokens + cost auto-charged,
+          resp = ask(model="claude-opus-4-8",       # named once, here; priced from it,
+                     messages=[...])                # call + tokens + cost auto-charged,
                                                     # and it stops at $100 of spend
 
 Recognized usage shapes (object attributes or dict keys, no SDK import) — Gemini,
@@ -37,7 +37,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Iterator, Mapping, Optional
 
-from .context import charge_call, charge_cost, charge_tokens
+from .context import charge_call, charge_cost, charge_tokens, current_policy
 
 
 @dataclass(frozen=True)
@@ -232,6 +232,33 @@ def _meter_result(result: Any, price: Optional[Price]) -> Any:
     return result
 
 
+def _resolve_price(
+    fixed: Optional[Price], call_kwargs: Mapping[str, Any]
+) -> Optional[Price]:
+    """Price for one call: an explicit/wrap-time price if set, otherwise read the
+    ``model="..."`` the caller already passed (OpenAI / Anthropic put it in the
+    call) and look it up — so the model is named once, not twice.
+
+    Unknown auto-detected models price as ``None`` (tokens only), *except* when a
+    money budget is active: then we refuse rather than let the budget silently do
+    nothing, asking for an explicit ``price=``.
+    """
+    if fixed is not None:
+        return fixed
+    model = call_kwargs.get("model")
+    if not isinstance(model, str):
+        return None  # e.g. Gemini binds the model to the client, not the call
+    from .prices import find_price  # lazy import to avoid a cycle (prices -> usage)
+
+    price = find_price(model)
+    if price is None and current_policy().cost_budgets:
+        raise ValueError(
+            f"a money budget is active but model {model!r} isn't in the built-in price "
+            f"table — pass metered(call, price=Price(...)) or model=... so spend is counted"
+        )
+    return price
+
+
 def metered(
     fn: Callable[..., Any],
     price: Optional[Price] = None,
@@ -240,19 +267,27 @@ def metered(
     """Wrap a model-call function so each call auto-charges itself.
 
     On every call: one call is charged against the active quota / rate limit /
-    deadline *before* the request, and the response's tokens (and, with a price,
-    the dollar cost) are charged *after*. Works on sync and async callables
+    deadline *before* the request, and the response's tokens (and, when priced, the
+    dollar cost) are charged *after*. Works on sync and async callables
     (auto-detected), so you wrap your model client's method once and stop reporting
     usage by hand.
+
+    **Pricing needs no second mention of the model.** Just wrap the call and name
+    the model where you already do — in the call::
+
+        ask = metered(client.messages.create)            # nothing to repeat
+        with safely(budget="$100"):
+            ask(model="claude-opus-4-8", messages=[...])  # priced from this `model=`
+
+    ``metered`` reads ``model=`` from each call (OpenAI / Anthropic), so the same
+    wrapper prices mixed models correctly. Gemini binds the model to the client, so
+    name it once with ``metered(gm.generate_content, model="gemini-1.5-pro")``. An
+    explicit ``price=Price(input=..., output=...)`` ($ per 1M tokens) overrides both.
 
     **Streaming** is handled transparently: if the call returns a stream (a sync or
     async iterator of chunks — e.g. OpenAI with ``stream_options={"include_usage":
     True}``, or Gemini streaming), the stream is passed through and usage is charged
     once it's fully consumed. Consume it inside the ``safely(...)`` block.
-
-    Pricing: pass ``price=Price(input=..., output=...)`` ($ per 1M tokens), or
-    ``model="claude-opus-4-8"`` to look it up in the built-in table (see
-    :mod:`agent_safety.prices`). With neither, tokens are charged but cost is not.
     """
     if price is None and model is not None:
         from .prices import price_for  # lazy import to avoid a cycle (prices -> usage)
@@ -263,14 +298,16 @@ def metered(
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            call_price = _resolve_price(price, kwargs)
             charge_call()
-            return _meter_result(await fn(*args, **kwargs), price)
+            return _meter_result(await fn(*args, **kwargs), call_price)
 
         return async_wrapper
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        call_price = _resolve_price(price, kwargs)
         charge_call()
-        return _meter_result(fn(*args, **kwargs), price)
+        return _meter_result(fn(*args, **kwargs), call_price)
 
     return wrapper

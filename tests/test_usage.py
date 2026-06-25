@@ -344,3 +344,63 @@ def test_metered_stream_with_no_usage_charges_nothing():
         list(ask("hi"))
     assert q.calls_used == 1
     assert q.tokens_used == 0
+
+
+# -- model named once: auto-detected from the call ------------------------
+
+def test_metered_autodetects_model_from_call():
+    # no model/price on the wrapper; read model= from the call (OpenAI/Anthropic)
+    def create(model, messages):
+        return NS(usage=NS(prompt_tokens=1_000_000, completion_tokens=0, total_tokens=1_000_000))
+
+    ask = metered(create)
+    budget = CostBudget(20.0)
+    with safety_context(PermissionSet.allow_all(), cost_budget=budget):
+        ask(model="claude-opus-4-8", messages=[])   # opus input $15/Mtok
+    assert round(budget.spent, 2) == 15.00
+
+
+def test_metered_same_wrapper_prices_mixed_models():
+    def create(model, messages):
+        return NS(usage=NS(prompt_tokens=1_000_000, completion_tokens=0, total_tokens=1_000_000))
+
+    ask = metered(create)
+    b1, b2 = CostBudget(100.0), CostBudget(100.0)
+    with safety_context(PermissionSet.allow_all(), cost_budget=b1):
+        ask(model="claude-opus-4-8", messages=[])    # $15
+    with safety_context(PermissionSet.allow_all(), cost_budget=b2):
+        ask(model="gpt-4o-mini", messages=[])         # $0.15
+    assert round(b1.spent, 2) == 15.00
+    assert round(b2.spent, 4) == 0.15
+
+
+def test_metered_unknown_model_with_budget_refuses():
+    def create(model, messages):
+        return NS(usage=NS(total_tokens=10))
+
+    ask = metered(create)
+    with safety_context(PermissionSet.allow_all(), cost_budget=CostBudget(10.0)):
+        with pytest.raises(ValueError):
+            ask(model="my-private-finetune-v3", messages=[])   # would silently bypass budget
+
+
+def test_metered_unknown_model_without_budget_is_tokens_only():
+    def create(model, messages):
+        return NS(usage=NS(total_tokens=1_000_000))
+
+    ask = metered(create)
+    q = Quota(max_tokens=5_000_000)
+    with safety_context(PermissionSet.allow_all(), quota=q):
+        ask(model="my-private-finetune-v3", messages=[])       # no budget -> no error
+    assert q.tokens_used == 1_000_000
+
+
+def test_metered_explicit_price_overrides_call_model():
+    def create(model, messages):
+        return NS(usage=NS(prompt_tokens=1_000_000, completion_tokens=0))
+
+    ask = metered(create, price=Price(input=1.0, output=1.0))   # explicit wins
+    budget = CostBudget(100.0)
+    with safety_context(PermissionSet.allow_all(), cost_budget=budget):
+        ask(model="claude-opus-4-8", messages=[])               # ignores opus $15
+    assert round(budget.spent, 4) == 1.0

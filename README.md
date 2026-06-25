@@ -216,20 +216,25 @@ from the response's tokens and the model's price, and calls stop when the budget
 ```python
 from agent_safety import metered, safely
 
-ask = metered(client.messages.create, model="claude-opus-4-8")  # price from the table
-with safely(allow="...", budget="$100"):                         # "spend at most $100"
-    resp = ask(model="...", messages=[...])    # call + tokens + cost charged automatically;
-                                               # raises CostBudgetExceeded at $100 of spend
+ask = metered(client.messages.create)          # wrap once — nothing else to repeat
+with safely(allow="...", budget="$100"):        # "spend at most $100"
+    resp = ask(model="claude-opus-4-8",         # the model is named here, once...
+               messages=[...])                  # ...and priced from it automatically;
+                                                # raises CostBudgetExceeded at $100 of spend
 ```
+
+You name the model **once**, in the call you're already making — `metered` reads
+`model=` from each call (OpenAI / Anthropic) and prices it from the built-in table,
+so the same wrapper prices mixed models correctly. (Gemini binds the model to the
+client, so name it once there: `metered(gm.generate_content, model="gemini-1.5-pro")`.)
+An explicit `price=Price(input=3.0, output=15.0)` ($ per 1M tokens) overrides the table.
 
 `metered` reads the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency),
 including **cache-read / cache-write tokens** (priced separately, since cached input
 is much cheaper) and **streaming** responses (it charges once the stream is consumed).
-Name the model and the price comes from a small built-in table, or pass
-`price=Price(input=3.0, output=15.0)` ($ per 1M tokens) to set it yourself — an explicit
-price always wins, and an unknown model raises rather than silently billing $0. Omit
-both for tokens-only. (`budget=` also accepts a plain number; the price table is a dated
-convenience — verify against current provider pricing.)
+An unknown model is tokens-only — except when a `budget=` is active, where it asks for
+an explicit `price=` rather than letting the budget silently do nothing. (The price
+table is a dated convenience — verify against current provider pricing.)
 
 **Many agents at once.** Because the policy lives in a `contextvars.ContextVar`,
 every thread and every `asyncio` task automatically gets its *own* rules — so

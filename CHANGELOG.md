@@ -32,6 +32,12 @@ versions may include additive API changes).
 - **Streaming**: `metered` detects a sync or async stream of chunks and charges usage
   once it's consumed (merging cumulative/split per-chunk usage), so streamed model
   calls are metered too.
+- **No double-spec**: `metered` reads `model=` from each call (OpenAI / Anthropic) and
+  prices it automatically, so you name the model once — in the call you already make,
+  not again on the wrapper. The same wrapper prices mixed models correctly; an explicit
+  `price=`/`model=` still overrides. Unknown auto-detected models are tokens-only, except
+  when a money budget is active (then `metered` asks for an explicit `price=` rather than
+  letting the budget silently do nothing).
 
 ## [Unreleased]
 
