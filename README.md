@@ -426,6 +426,19 @@ def get_weather(city: str) -> str:
 tools = registry.schemas("openai")   # or "anthropic" / "gemini"
 ```
 
+**One `allow=` governs both sides.** Called inside a `safely(...)` block,
+`registry.schemas(dialect)` returns only the tools the policy *permits* — so the
+model is offered exactly what it's allowed to run, and you never list the toolset
+twice (once to grant, once to advertise):
+
+```python
+with safely(allow=["weather.read"]):     # grant once...
+    tools = registry.schemas("openai")   # ...and the schema only includes weather.read
+```
+
+Outside a block every registered tool is returned (unchanged); pass
+`allowed_only=True`/`False` to force filtering either way.
+
 ### Or let the signature write the schema
 
 Hand-writing JSON Schema that just restates the signature is duplication. Omit

@@ -36,6 +36,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
+from .context import in_context, is_allowed
 from .decorators import guarded_tool
 from .exceptions import AgentSafetyError
 from .guards import Guard
@@ -188,14 +189,24 @@ class ToolRegistry:
         return decorator
 
     # -- schema export ------------------------------------------------------
-    def schemas(self, dialect: str) -> List[Dict[str, Any]]:
+    def schemas(self, dialect: str, *, allowed_only: Optional[bool] = None) -> List[Dict[str, Any]]:
         """Return the ``tools`` value to hand the provider, in *dialect* shape.
 
         ``"anthropic"`` / ``"openai"`` → a list of tool definitions.
         ``"gemini"`` → a one-element list wrapping ``function_declarations``,
         ready to assign to the Gemini ``tools`` parameter.
+
+        Inside an active ``safely(...)`` block this returns only the tools the policy
+        *allows*, so one ``allow=`` governs both what the model is offered and what
+        may actually run — no listing tools twice. Outside a block every registered
+        tool is returned; pass ``allowed_only=True``/``False`` to force it either way.
         """
-        specs = [t.schema(dialect) for t in self._tools.values()]
+        if allowed_only is None:
+            allowed_only = in_context()
+        tools = list(self._tools.values())
+        if allowed_only:
+            tools = [t for t in tools if is_allowed(t.capability)]
+        specs = [t.schema(dialect) for t in tools]
         if dialect == "gemini":
             return [{"function_declarations": specs}]
         if dialect in ("anthropic", "openai"):

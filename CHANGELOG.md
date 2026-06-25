@@ -59,6 +59,13 @@ versions may include additive API changes).
 - `examples/mcp_agent.py` and a README section showing how `guard_mcp(session)`
   governs a Model Context Protocol server's tools with the same `safely(...)` policy.
 
+### Changed (additive)
+- `ToolRegistry.schemas(dialect)` now **auto-filters to the active policy**: inside a
+  `safely(...)` block it returns only the tools `allow=` permits, so one grant governs
+  both what the model is offered and what may run — no listing the toolset twice.
+  Outside a block, every tool is returned as before; `schemas(dialect, allowed_only=…)`
+  forces it either way.
+
 ### Changed
 - README re-framed around action governance ("what an agent may *do*"), with the
   scorecard summary and the content-vs-action framing.

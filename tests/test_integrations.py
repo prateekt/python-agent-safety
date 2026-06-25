@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from agent_safety import PermissionSet, ToolRegistry, safety_context
+from agent_safety import PermissionSet, ToolRegistry, safely, safety_context
 from agent_safety.exceptions import PermissionDenied
 
 
@@ -107,3 +107,57 @@ def test_safe_dispatch_success():
         msg = reg.safe_dispatch("anthropic", "tu_9", "get_weather", {"city": "Lima"})
     assert msg["content"] == "sunny in Lima"
     assert "is_error" not in msg
+
+
+# -- schemas() auto-filter to the active policy ---------------------------
+
+def build_multi():
+    reg = ToolRegistry()
+
+    @reg.tool("search", description="search the web")
+    def search(q: str) -> str:
+        return "..."
+
+    @reg.tool("writer", description="write a file")
+    def writer(path: str) -> str:
+        return "ok"
+
+    @reg.tool("shell", description="run a shell command")
+    def shell(cmd: str) -> str:
+        return "ok"
+
+    return reg
+
+
+def _openai_names(specs):
+    return sorted(s["function"]["name"] for s in specs)
+
+
+def test_schemas_unfiltered_outside_a_context():
+    reg = build_multi()
+    assert _openai_names(reg.schemas("openai")) == ["search", "shell", "writer"]
+
+
+def test_schemas_filter_to_allowed_inside_a_context():
+    reg = build_multi()
+    with safely(allow=["search", "writer"]):     # one allow= governs the offered tools
+        assert _openai_names(reg.schemas("openai")) == ["search", "writer"]
+
+
+def test_schemas_allowed_only_false_forces_all_inside_context():
+    reg = build_multi()
+    with safely(allow=["search"]):
+        assert _openai_names(reg.schemas("openai", allowed_only=False)) == \
+            ["search", "shell", "writer"]
+
+
+def test_schemas_allowed_only_true_outside_context_filters_everything():
+    reg = build_multi()
+    assert reg.schemas("openai", allowed_only=True) == []   # root is deny-all
+
+
+def test_schemas_gemini_shape_is_filtered():
+    reg = build_multi()
+    with safely(allow=["search"]):
+        gemini = reg.schemas("gemini")
+        assert [d["name"] for d in gemini[0]["function_declarations"]] == ["search"]
