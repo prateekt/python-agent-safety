@@ -22,6 +22,16 @@ versions may include additive API changes).
   the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency). Also
   `CostBudget(max_usd)`, `charge_usage(response, price=…)`, `charge_cost(amount)`,
   `extract_tokens`, `TokenUsage`.
+- **Cache-token accuracy**: `TokenUsage` / `Price` now have separate `cached` (cache
+  read) and `cache_write` buckets, normalized correctly whether a provider reports
+  them additively (Anthropic) or as a subset of the prompt (OpenAI
+  `prompt_tokens_details.cached_tokens`, Gemini `cached_content_token_count`). The
+  built-in table prices them per provider (Anthropic ~0.1×/1.25× input, OpenAI ~0.5×,
+  Gemini ~0.25×), so cache-heavy agents are billed accurately instead of at full input
+  price.
+- **Streaming**: `metered` detects a sync or async stream of chunks and charges usage
+  once it's consumed (merging cumulative/split per-chunk usage), so streamed model
+  calls are metered too.
 
 ## [Unreleased]
 

@@ -222,7 +222,9 @@ with safely(allow="...", budget="$100"):                         # "spend at mos
                                                # raises CostBudgetExceeded at $100 of spend
 ```
 
-`metered` reads the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency).
+`metered` reads the Gemini / OpenAI / Anthropic usage shapes (no SDK dependency),
+including **cache-read / cache-write tokens** (priced separately, since cached input
+is much cheaper) and **streaming** responses (it charges once the stream is consumed).
 Name the model and the price comes from a small built-in table, or pass
 `price=Price(input=3.0, output=15.0)` ($ per 1M tokens) to set it yourself — an explicit
 price always wins, and an unknown model raises rather than silently billing $0. Omit
