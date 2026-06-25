@@ -74,6 +74,11 @@ def current_policy() -> Policy:
     return _current.get()
 
 
+def in_context() -> bool:
+    """True when a ``safety_context`` is active (not the deny-all root sentinel)."""
+    return _current.get() is not _ROOT
+
+
 def require(capability: str) -> None:
     """Assert the current policy allows *capability*, else ``PermissionDenied``."""
     current_policy().require(capability)
