@@ -56,6 +56,8 @@ versions may include additive API changes).
   `tests/test_attack_suite.py` enforces it so the claims can't silently regress.
 - `POSITIONING.md` — the action-governance / least-privilege-for-agents thesis,
   and how it complements (rather than competes with) content scanners.
+- `examples/mcp_agent.py` and a README section showing how `guard_mcp(session)`
+  governs a Model Context Protocol server's tools with the same `safely(...)` policy.
 
 ### Changed
 - README re-framed around action governance ("what an agent may *do*"), with the
