@@ -596,7 +596,7 @@ python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
 python examples/mcp_agent.py       # govern an MCP server's tools with safely(...)
 python examples/benchmark.py       # per-call overhead on your machine
 python benchmarks/attack_suite.py  # the attack scorecard (what's contained)
-python -m pytest                   # 355 tests (incl. the CI-gated attack suite)
+python -m pytest                   # 388 tests (incl. the CI-gated attack suite)
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
