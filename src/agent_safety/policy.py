@@ -95,6 +95,20 @@ class Policy:
             span = current_span()
             if span is not None:
                 event = replace(event, span=span)
+        try:
+            from .run import current_run
+            run = current_run()
+            if run is not None:
+                if event.task_id is None:
+                    event = replace(event, task_id=run.task_id)
+                if event.agent_id is None:
+                    event = replace(event, agent_id=run.agent_id)
+                if event.request_id is None:
+                    event = replace(event, request_id=run.request_id)
+                if event.org_id is None and run.org_id:
+                    event = replace(event, org_id=run.org_id)
+        except ImportError:
+            pass
         for sink in self.auditors:
             sink(event)
 

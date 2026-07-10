@@ -17,6 +17,10 @@ does **not** cover — so you can decide where it fits and what to layer around 
 | The **model / agent** and any content it ingests (tool outputs, user input, retrieved docs) | **Untrusted** — may be adversarial (prompt injection). |
 | Your **host code** that opens a `safely(...)` / `safety_context(...)` block | **Trusted** — it defines the trust ceiling. |
 | The **tools** you register | Trusted code, but invoked with untrusted arguments. |
+| **Policy Gateway** (distributed) | **Trusted** — holds signing keys; enforce mTLS in production. |
+| **Redis budget store** (distributed) | **Trusted** — tampering breaks budget integrity. |
+| **Event bus** (distributed) | **Untrusted transport** — rely on envelope signatures + idempotency. |
+| **Tool workers** (distributed) | **Semi-trusted** — verify-only; execute within minted envelopes. |
 
 The core idea: an untrusted model drives, but it can only act *through* tools your
 trusted host code allowed, under budgets your host set. Even a successful prompt

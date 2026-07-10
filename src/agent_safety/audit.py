@@ -12,10 +12,11 @@ not which model produced the request.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import IO, Any, Callable, Dict, List, Optional
 
 # A sink is anything callable with an AuditEvent.
@@ -33,6 +34,12 @@ class AuditEvent:
     stage: Optional[str] = None
     span: Optional[str] = None   # active trace_span() path, stamped by Policy.audit
     timestamp: float = field(default_factory=time.time)
+    task_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    request_id: Optional[str] = None
+    org_id: Optional[str] = None
+    prev_hash: Optional[str] = None
+    event_hash: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -47,6 +54,18 @@ class AuditEvent:
             d["stage"] = self.stage
         if self.span is not None:
             d["span"] = self.span
+        if self.task_id is not None:
+            d["task_id"] = self.task_id
+        if self.agent_id is not None:
+            d["agent_id"] = self.agent_id
+        if self.request_id is not None:
+            d["request_id"] = self.request_id
+        if self.org_id is not None:
+            d["org_id"] = self.org_id
+        if self.prev_hash is not None:
+            d["prev_hash"] = self.prev_hash
+        if self.event_hash is not None:
+            d["event_hash"] = self.event_hash
         return d
 
 
@@ -90,3 +109,25 @@ class MetricsSink:
         if action is None:
             return sum(self.counts.values())
         return sum(n for k, n in self.counts.items() if k.split("/", 1)[0] == action)
+
+
+class HashChainSink:
+    """Tamper-evident audit sink chaining SHA-256 event hashes."""
+
+    def __init__(self, inner: Optional[AuditSink] = None) -> None:
+        self.inner = inner
+        self.events: List[AuditEvent] = []
+        self._prev_hash = "0" * 64
+
+    def __call__(self, event: AuditEvent) -> None:
+        payload = json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256((self._prev_hash + payload).encode()).hexdigest()
+        chained = replace(event, prev_hash=self._prev_hash, event_hash=digest)
+        self._prev_hash = digest
+        self.events.append(chained)
+        if self.inner is not None:
+            self.inner(chained)
+
+    @property
+    def head_hash(self) -> str:
+        return self._prev_hash

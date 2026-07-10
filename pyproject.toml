@@ -38,6 +38,8 @@ Issues = "https://github.com/prateekt/python-agent-safety/issues"
 Changelog = "https://github.com/prateekt/python-agent-safety/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+distributed = ["redis>=4.0"]
+observability = []
 dev = ["pytest>=7.0", "mypy>=1.8", "ruff>=0.4"]
 
 [tool.setuptools.dynamic]

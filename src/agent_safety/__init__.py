@@ -38,7 +38,15 @@ from __future__ import annotations
 from .action import Action
 from .approval import ApprovalGate
 from .approval import ApprovalRequest as ApprovalRequest  # back-compat alias of Action
-from .audit import AuditEvent, AuditSink, JsonlSink, ListSink, MetricsSink
+from .audit import AuditEvent, AuditSink, HashChainSink, JsonlSink, ListSink, MetricsSink
+from .backends import (
+    BudgetBackend,
+    BudgetCharge,
+    BudgetLimits,
+    ChargeResult,
+    MemoryBackend,
+    default_memory_backend,
+)
 from .constitution import ConstitutionGate
 from .context import (
     charge_call,
@@ -53,7 +61,10 @@ from .context import (
     safety_context,
 )
 from .decorators import guarded_async_tool, guarded_tool
+from .distributed import DistributedMode, distributed_mode, should_enforce_envelope
 from .easy import Profiles, guard, safely, tool
+from .envelope import CapabilityEnvelope, EnvelopeSigner, EnvelopeVerifier
+from .events import MintResponse, ToolRequest, ToolResult
 from .exceptions import (
     AgentSafetyError,
     ApprovalDenied,
@@ -88,8 +99,10 @@ from .guards import (
 from .integrations import DIALECTS, ToolCall, ToolRegistry, ToolSpec, parse_tool_calls
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .mcp import SafeMCP, guard_mcp
+from .observability import CircuitBreaker, PrometheusMetrics, StructuredLog
 from .permissions import PermissionSet
 from .policy import Explanation, Policy
+from .policy_spec import PolicyRegistry, PolicySpec, safely_from_spec
 from .preview import PreviewGate
 from .prices import price_for
 from .quota import CostBudget, Quota, RiskBudget
@@ -102,6 +115,7 @@ from .reasoning import (
     thought_trace,
 )
 from .reasoning import ReasoningRequest as ReasoningRequest  # back-compat alias of Action
+from .run import RunContext, current_run, run_context
 from .sandbox import NetworkAllowlist, PathBoundary
 from .schema import Param, tool_description, tool_schema
 from .tracing import current_span, trace_span
@@ -225,4 +239,30 @@ __all__ = [
     "CostBudgetExceeded",
     "TimeoutExceeded",
     "MemoryBudgetExceeded",
+    # distributed
+    "RunContext",
+    "current_run",
+    "run_context",
+    "BudgetBackend",
+    "BudgetCharge",
+    "BudgetLimits",
+    "ChargeResult",
+    "MemoryBackend",
+    "default_memory_backend",
+    "PolicySpec",
+    "PolicyRegistry",
+    "safely_from_spec",
+    "CapabilityEnvelope",
+    "EnvelopeSigner",
+    "EnvelopeVerifier",
+    "ToolRequest",
+    "ToolResult",
+    "MintResponse",
+    "DistributedMode",
+    "distributed_mode",
+    "should_enforce_envelope",
+    "CircuitBreaker",
+    "PrometheusMetrics",
+    "StructuredLog",
+    "HashChainSink",
 ]

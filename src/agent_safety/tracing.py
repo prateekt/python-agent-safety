@@ -15,6 +15,7 @@ import cycle.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 from contextlib import contextmanager
 from typing import Iterator, Optional, Tuple
 
@@ -27,6 +28,16 @@ def current_span() -> Optional[str]:
     """Return the active dotted span path, or ``None`` outside any span."""
     parts = _spans.get()
     return ".".join(parts) if parts else None
+
+
+def traceparent_header() -> Optional[str]:
+    """W3C traceparent-style header for cross-service propagation (stdlib)."""
+    span = current_span()
+    if span is None:
+        return None
+    trace_id = hashlib.sha256(span.encode()).hexdigest()[:32]
+    span_id = hashlib.sha256(f"{span}:0".encode()).hexdigest()[:16]
+    return f"00-{trace_id}-{span_id}-01"
 
 
 @contextmanager
