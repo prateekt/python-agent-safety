@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from agent_safety import safely, tool
-from agent_safety.envelope import EnvelopeSigner, EnvelopeVerifier
+from agent_safety.envelope import EnvelopeSigner
 from agent_safety.exceptions import PermissionDenied
 from agent_safety.policy_spec import PolicySpec, safely_from_spec
 from agent_safety.run import RunContext

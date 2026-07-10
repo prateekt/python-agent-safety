@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import statistics
 import time
-import uuid
 
 from agent_safety.backends import MemoryBackend
 from agent_safety.envelope import EnvelopeVerifier
@@ -43,7 +42,7 @@ def bench_envelope_verify(n: int = 1000) -> None:
 
 
 def bench_memory_charge(n: int = 1000) -> None:
-    from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
+    from agent_safety.backends import BudgetCharge, BudgetLimits
     backend = MemoryBackend()
     limits = BudgetLimits(max_calls=n + 1)
     samples = []
