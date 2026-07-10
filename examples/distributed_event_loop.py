@@ -11,8 +11,7 @@ import queue
 import threading
 import uuid
 
-from agent_safety import ToolRegistry, safely, tool
-from agent_safety.envelope import EnvelopeVerifier
+from agent_safety import ToolRegistry, safely
 from agent_safety.events import ToolRequest, ToolResult
 from agent_safety.gateway.client import GatewayClient
 from agent_safety.gateway.server import GatewayConfig, PolicyGateway, serve_gateway

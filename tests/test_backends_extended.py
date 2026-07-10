@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend

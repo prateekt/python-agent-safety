@@ -7,7 +7,6 @@ import json
 import time
 from dataclasses import dataclass, replace
 from threading import Lock
-from contextlib import contextmanager
 from typing import Any, ContextManager, Dict, Optional, Tuple
 
 from .backends import BudgetBackend, BudgetLimits
