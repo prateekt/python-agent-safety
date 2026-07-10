@@ -61,7 +61,15 @@ from .context import (
     safety_context,
 )
 from .decorators import guarded_async_tool, guarded_tool
-from .distributed import DistributedMode, distributed_mode, should_enforce_envelope
+from .distributed import (
+    DistributedMode,
+    distributed_mode,
+    gateway_url,
+    load_signing_keys,
+    should_enforce_envelope,
+    should_require_envelope,
+    should_shadow_envelope,
+)
 from .easy import Profiles, guard, safely, tool
 from .envelope import CapabilityEnvelope, EnvelopeSigner, EnvelopeVerifier
 from .events import MintResponse, ToolRequest, ToolResult
@@ -260,7 +268,11 @@ __all__ = [
     "MintResponse",
     "DistributedMode",
     "distributed_mode",
+    "gateway_url",
+    "load_signing_keys",
     "should_enforce_envelope",
+    "should_require_envelope",
+    "should_shadow_envelope",
     "CircuitBreaker",
     "PrometheusMetrics",
     "StructuredLog",

@@ -217,7 +217,12 @@ class PolicyGateway:
         return gateway_metrics.exposition()
 
     def public_key_material(self) -> Dict[str, str]:
-        return {self.config.kid: base64.b64encode(self.config.signing_secret).decode()}
+        """Return ``kid -> sha256 fingerprint`` (never the raw HMAC secret)."""
+        digest = hashlib.sha256(self.config.signing_secret).hexdigest()
+        return {
+            self.config.kid: f"sha256:{digest}",
+            "_alg": "HMAC-SHA256",
+        }
 
 
 def create_handler(gw_instance: PolicyGateway) -> Type[BaseHTTPRequestHandler]:
