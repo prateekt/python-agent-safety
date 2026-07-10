@@ -596,12 +596,188 @@ python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
 python examples/mcp_agent.py       # govern an MCP server's tools with safely(...)
 python examples/benchmark.py       # per-call overhead on your machine
 python benchmarks/attack_suite.py  # the attack scorecard (what's contained)
-python -m pytest                   # 301 tests (incl. the CI-gated attack suite)
+python -m pytest                   # 355 tests (incl. the CI-gated attack suite)
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
 GEMINI_API_KEY=... python -m pytest tests/test_gemini_live.py -v
 ```
+
+## Distributed agent loops
+
+Single-process `safely(...)` is enough for one agent in one Python process. When
+planner, tool workers, and model calls live in **different processes** (or
+languages), you still want one shared budget, one audit trail, and the same
+least-privilege guarantees — without a gateway round-trip on every tool call.
+
+The distributed layer adds that with a **two-tier** model:
+
+| Tier | Where | What happens |
+|---|---|---|
+| **Cold path** | Policy Gateway (PDP) | Authoritative mint/charge/audit over HTTP; atomically updates shared budget store |
+| **Hot path** | Tool worker | Verify a signed `CapabilityEnvelope` locally (~µs); run the tool under `safely(envelope=...)` |
+
+```mermaid
+flowchart LR
+  Planner -->|ToolRequest| Gateway
+  Gateway -->|CapabilityEnvelope| Worker
+  Worker -->|ToolResult| Planner
+  Gateway --> BudgetStore[(Budget store)]
+```
+
+Install the optional Redis extra when you need a cross-process budget store:
+
+```bash
+pip install agent-safety[distributed]   # adds redis>=4.0
+```
+
+### Building blocks
+
+Three small types wire the pieces together — same ideas as the single-process
+API, just serializable and shareable:
+
+```python
+from agent_safety import RunContext, safely, tool
+from agent_safety.policy_spec import PolicySpec
+from agent_safety.gateway.client import GatewayClient
+
+# Serializable policy — same keywords as safely(...)
+spec = PolicySpec(allow=("search",), calls=10, no_repeats=3)
+
+# Correlation IDs stamped on every audit event
+ctx = RunContext.new(agent_id="planner")
+
+# Cold path: mint an envelope (charges shared budget once)
+client = GatewayClient("http://gateway:8765")
+envelope = client.fetch_envelope({
+    "task_id": ctx.task_id,
+    "request_id": ctx.request_id,
+    "capability": "search",
+    "policy_spec": spec.to_dict(),
+})
+
+# Hot path: verify envelope locally, then run the tool
+with safely(envelope=envelope, envelope_keys={"default": signing_secret}, run=ctx):
+    search("query")
+```
+
+- **`PolicySpec`** — versioned, hashable policy (permissions + budgets) you can
+  publish to a gateway registry or embed in events.
+- **`RunContext`** — `task_id`, `request_id`, `agent_id`, `org_id` for tracing
+  and idempotent budget charges.
+- **`CapabilityEnvelope`** — short-lived, signed proof that *this* capability
+  was minted against *this* policy hash; workers verify with `envelope_keys`
+  (HMAC today; no per-call gateway hop).
+
+Start the gateway locally:
+
+```bash
+python -m agent_safety.gateway --port 8765
+# GET  /healthz /readyz /metrics /v1/keys
+# POST /v1/mint /v1/charge /v1/audit
+```
+
+### Pattern 1 — Event-driven loop (reactive)
+
+**When:** planner and tool workers are separate processes connected by a queue,
+bus, or webhook.
+
+**Flow:** Planner emits a `ToolRequest` → worker calls gateway `/v1/mint` →
+worker runs the tool inside `safely(envelope=...)` → worker emits `ToolResult`.
+
+```python
+# Planner side
+request = ToolRequest(
+    request_id=uuid.uuid4().hex,
+    task_id=task_id,
+    capability="weather.read",
+    tool="get_weather",
+    arguments={"city": "Paris"},
+    policy_spec_hash=spec.policy_hash(),
+)
+bus.put(request)
+result = bus.get()   # ToolResult from worker
+```
+
+```python
+# Tool worker side
+envelope = client.fetch_envelope({...})
+with safely(envelope=envelope, envelope_keys=keys, run=ctx):
+    registry.safe_dispatch("anthropic", call_id, request.tool, request.arguments)
+```
+
+Runnable demo: [`examples/distributed_event_loop.py`](examples/distributed_event_loop.py).
+
+### Pattern 2 — Supervisor handoff (narrow on delegate)
+
+**When:** a supervisor agent delegates a subtask to a worker that should have
+**fewer** powers than the parent.
+
+**Flow:** Parent holds a broad `PolicySpec`; call `parent.narrow(child_spec)` to
+derive a stricter spec; gateway (or signer) mints an envelope scoped to the
+narrowed capabilities only.
+
+```python
+parent = PolicySpec(allow=("search", "summarize"), calls=10)
+child = parent.narrow(PolicySpec(allow=("summarize",), calls=3))
+
+envelope = signer.sign(
+    task_id=task_id,
+    policy_hash=child.policy_hash(),
+    allowed_capabilities=child.allow,
+    capability="summarize",
+)
+# Worker B can summarize but cannot search — even if compromised
+```
+
+Runnable demo: [`examples/distributed_handoff.py`](examples/distributed_handoff.py).
+
+### Pattern 3 — Parallel branches, one budget
+
+**When:** several workers (threads, pods, or asyncio tasks) share one task's
+call budget and must not overspend collectively.
+
+**Flow:** All branches use the same `task_id` and a shared `BudgetBackend`
+(in-memory for tests, Redis in production). Each branch calls `charge()` with a
+unique `request_id` (idempotent retries safe).
+
+```python
+backend = RedisBudgetBackend(redis_client, org_id="acme")
+limits = spec.budget_limits()
+
+def branch(name: str, idx: int) -> None:
+    backend.charge(
+        BudgetCharge(task_id=task_id, request_id=f"{name}-{idx}", signature=f"branch-{name}"),
+        limits,
+    )
+```
+
+The 4th parallel call hits `QuotaExceeded` when `calls=3`. Demo:
+[`examples/distributed_parallel_branches.py`](examples/distributed_parallel_branches.py).
+
+### Rollout modes
+
+Flip enforcement gradually with one env var — no code change:
+
+| `AGENT_SAFETY_DISTRIBUTED` | Behavior |
+|---|---|
+| `local` (default) | Single-process `safely(...)` only |
+| `shadow` | Verify envelopes but don't block on mismatch (log only) |
+| `canary` | Same as shadow; route a fraction of traffic to gateway |
+| `enforce` | Envelope verification is mandatory on the hot path |
+
+```python
+from agent_safety.distributed import distributed_mode, should_enforce_envelope
+
+if should_enforce_envelope():
+    ...  # require envelope before tool runs
+```
+
+### Production
+
+For JWT service auth, Prometheus metrics, hash-chained audit, K8s manifests, and
+runbooks, see [**OPERATIONS.md**](OPERATIONS.md), [**THREAT_MODEL.md**](THREAT_MODEL.md),
+and [`deploy/`](deploy/).
 
 ## Layout
 
@@ -631,6 +807,14 @@ src/agent_safety/
   schema.py        tool_schema / Param — derive JSON-Schema from a signature
   validation.py    validate_args — check tool inputs against the declared schema
   integrations.py  ToolRegistry — schema dialects, neutral dispatch, parse_tool_calls
+  backends/        BudgetCharge + MemoryBackend (+ optional RedisBudgetBackend)
+  run.py           RunContext — task_id / request_id correlation
+  policy_spec.py   PolicySpec + PolicyRegistry — serializable distributed policy
+  envelope.py      CapabilityEnvelope sign/verify (HMAC; workers verify-only)
+  events.py        ToolRequest / ToolResult event types
+  gateway/         Policy Gateway PDP (mint / charge / audit / metrics)
+  distributed.py   Rollout modes: shadow / canary / enforce
+  observability.py Metrics, structured logs, circuit breaker
   exceptions.py    AgentSafetyError + PermissionDenied / GuardViolation / QuotaExceeded /
                    RateLimitExceeded / DeadlineExceeded / RiskBudgetExceeded / LoopDetected /
                    ApprovalDenied / ExplanationRequired / ConstitutionViolation /

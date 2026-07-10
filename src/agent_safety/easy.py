@@ -60,9 +60,11 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Unio
 
 from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink
+from .backends import BudgetBackend
 from .constitution import ConstitutionGate
 from .context import safety_context
 from .decorators import guarded_async_tool, guarded_tool
+from .envelope import CapabilityEnvelope, EnvelopeVerifier
 from .guards import (
     DenyPattern,
     Guard,
@@ -79,6 +81,7 @@ from .policy import Policy
 from .preview import PreviewGate
 from .quota import CostBudget, Quota, RiskBudget
 from .reasoning import ReasoningGate
+from .run import RunContext, run_context
 
 _Names = Union[str, Iterable[str], None]
 
@@ -326,41 +329,75 @@ def safely(
     honeytoken: Optional[str] = None,
     monitor: bool = False,
     log: Any = None,
+    run: Optional[RunContext] = None,
+    envelope: Optional[CapabilityEnvelope] = None,
+    envelope_keys: Optional[Dict[str, bytes]] = None,
+    backend: Optional[BudgetBackend] = None,
 ) -> Iterator[Policy]:
     """Run a block of code under simple, plain-English safety rules.
 
     See the module docstring for every keyword. All are optional; the common
     case is ``with safely(allow="read_file", calls=10):``.
-    """
-    quota = Quota(max_calls=calls, max_tokens=tokens) if (calls or tokens) else None
-    rate: Optional[RateLimit] = None
-    if per_second is not None:
-        rate = RateLimit(per_second=per_second)
-    elif per_minute is not None:
-        rate = RateLimit(per_minute=per_minute)
-    output_guards: List[Guard] = [RedactPII(), SecretScanner()] if hide_secrets else []
-    input_guards = _input_guards(max_input, block, block_injections, clean_text)
-    if honeytoken:
-        input_guards.append(Honeytoken(honeytoken))
 
-    with safety_context(
-        _permissions(allow, deny),
-        quota=quota,
-        rate_limit=rate,
-        deadline=Deadline(seconds) if seconds else None,
-        concurrency=_concurrency(at_most),
-        risk_budget=RiskBudget(risk_budget) if risk_budget else None,
-        cost_budget=CostBudget(_money(budget)) if budget is not None else None,
-        timeout=timeout,
-        memory=_bytes(memory) if memory is not None else None,
-        input_guards=input_guards,
-        output_guards=output_guards,
-        loop_guard=LoopGuard(no_repeats) if no_repeats else None,
-        approval=_approval(ask),
-        reasoning=_reasoning(explain),
-        constitution=_constitution(rule, judge),
-        preview=_preview(preview),
-        enforce=False if monitor else None,
-        audit=_audit(log),
-    ) as policy:
-        yield policy
+    Distributed keywords:
+
+    * ``run=`` — install a :class:`~agent_safety.run.RunContext` for audit correlation.
+    * ``envelope=`` — verify a signed :class:`~agent_safety.envelope.CapabilityEnvelope`
+      on entry (hot path; no gateway hop per tool call).
+    * ``envelope_keys=`` — map of ``kid -> secret`` for envelope verification.
+    * ``backend=`` — optional :class:`~agent_safety.backends.BudgetBackend` for
+      shared budget state (used with gateway cold path).
+    """
+    verifier: Optional[EnvelopeVerifier] = None
+    if envelope is not None and envelope_keys:
+        verifier = EnvelopeVerifier(envelope_keys)
+
+    run_mgr = run_context(run) if run is not None else None
+    if run_mgr is not None:
+        run_mgr.__enter__()
+
+    try:
+        if envelope is not None and verifier is not None:
+            verifier.verify(envelope)
+
+        quota = Quota(max_calls=calls, max_tokens=tokens) if (calls or tokens) else None
+        rate: Optional[RateLimit] = None
+        if per_second is not None:
+            rate = RateLimit(per_second=per_second)
+        elif per_minute is not None:
+            rate = RateLimit(per_minute=per_minute)
+        output_guards: List[Guard] = [RedactPII(), SecretScanner()] if hide_secrets else []
+        input_guards = _input_guards(max_input, block, block_injections, clean_text)
+        if honeytoken:
+            input_guards.append(Honeytoken(honeytoken))
+
+        if envelope is not None:
+            perms: Optional[PermissionSet] = PermissionSet.of(*envelope.allowed_capabilities)
+        else:
+            perms = _permissions(allow, deny)
+
+        with safety_context(
+            perms,
+            quota=quota,
+            rate_limit=rate,
+            deadline=Deadline(seconds) if seconds else None,
+            concurrency=_concurrency(at_most),
+            risk_budget=RiskBudget(risk_budget) if risk_budget else None,
+            cost_budget=CostBudget(_money(budget)) if budget is not None else None,
+            timeout=timeout,
+            memory=_bytes(memory) if memory is not None else None,
+            input_guards=input_guards,
+            output_guards=output_guards,
+            loop_guard=LoopGuard(no_repeats) if no_repeats else None,
+            approval=_approval(ask),
+            reasoning=_reasoning(explain),
+            constitution=_constitution(rule, judge),
+            preview=_preview(preview),
+            enforce=False if monitor else None,
+            audit=_audit(log),
+        ) as policy:
+            _ = backend  # reserved for distributed charge integration
+            yield policy
+    finally:
+        if run_mgr is not None:
+            run_mgr.__exit__(None, None, None)

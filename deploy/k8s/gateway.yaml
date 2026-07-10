@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-safety-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: agent-safety-gateway
+  template:
+    metadata:
+      labels:
+        app: agent-safety-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: agent-safety-gateway:latest
+          ports:
+            - containerPort: 8765
+          env:
+            - name: AGENT_SAFETY_DISTRIBUTED
+              value: enforce
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8765
+            initialDelaySeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8765
+            initialDelaySeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-safety-gateway
+spec:
+  selector:
+    app: agent-safety-gateway
+  ports:
+    - port: 8765
+      targetPort: 8765
