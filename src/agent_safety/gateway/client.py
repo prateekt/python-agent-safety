@@ -17,12 +17,19 @@ class GatewayClient:
 
     def __init__(
         self,
-        base_url: str,
+        base_url: Optional[str] = None,
         *,
         auth_token: Optional[str] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        from ..distributed import gateway_url
+
+        resolved = (base_url or gateway_url() or "").rstrip("/")
+        if not resolved:
+            raise ValueError(
+                "gateway base_url required (or set AGENT_SAFETY_GATEWAY_URL)"
+            )
+        self.base_url = resolved
         self.auth_token = auth_token
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
 

@@ -31,9 +31,11 @@ microVMs) and a DNS-aware HTTP client.
 See [`THREAT_MODEL.md`](THREAT_MODEL.md) for the trust boundaries, what is in and
 out of scope, residual risks, and a mapping to the OWASP LLM Top 10.
 
-**Distributed deployments:** run the policy gateway with mTLS, rotate signing
-keys via `kid`, and treat Redis as a trusted budget store. Workers hold
-verify-only keys and cannot mint envelopes. See [`OPERATIONS.md`](OPERATIONS.md).
+**Distributed deployments:** run the policy gateway behind mTLS (or an equivalent
+service mesh), rotate signing keys via overlapping `kid`s, and give workers
+verify-only secrets through `AGENT_SAFETY_SIGNING_KEYS` — never mint from a
+worker. `GET /v1/keys` returns SHA-256 fingerprints only. Treat Redis as a
+trusted budget store. See [`OPERATIONS.md`](OPERATIONS.md).
 
 ## Reducing your own attack surface
 

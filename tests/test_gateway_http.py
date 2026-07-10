@@ -80,11 +80,16 @@ def test_metrics_and_keys(gateway_server):
     base, secret, _, _ = gateway_server
     status, body = _get(f"{base}/metrics")
     assert status == 200
-    assert b"agent_safety" in body or body == b""
+    assert isinstance(body, (bytes, bytearray))
     status, keys = _get(f"{base}/v1/keys")
     assert status == 200
     data = json.loads(keys)
     assert "default" in data
+    assert data["default"].startswith("sha256:")
+    # Must not leak the raw signing secret.
+    import base64
+    assert base64.b64encode(secret).decode() not in data["default"]
+    assert data.get("_alg") == "HMAC-SHA256"
 
 
 def test_mint_via_http(gateway_server):

@@ -667,13 +667,16 @@ with safely(envelope=envelope, envelope_keys={"default": signing_secret}, run=ct
   and idempotent budget charges.
 - **`CapabilityEnvelope`** — short-lived, signed proof that *this* capability
   was minted against *this* policy hash; workers verify with `envelope_keys`
-  (HMAC today; no per-call gateway hop).
+  or `AGENT_SAFETY_SIGNING_KEYS` (HMAC today; no per-call gateway hop).
+- **`backend=`** — shared `BudgetBackend`; with `run=`, tool charges hit Redis /
+  memory instead of a process-local quota. With `envelope=` as well, mint already
+  charged the call — the backend meters tokens only.
 
 Start the gateway locally:
 
 ```bash
 python -m agent_safety.gateway --port 8765
-# GET  /healthz /readyz /metrics /v1/keys
+# GET  /healthz /readyz /metrics /v1/keys   # /v1/keys returns fingerprints only
 # POST /v1/mint /v1/charge /v1/audit
 ```
 
@@ -742,7 +745,7 @@ call budget and must not overspend collectively.
 unique `request_id` (idempotent retries safe).
 
 ```python
-backend = RedisBudgetBackend(redis_client, org_id="acme")
+backend = MemoryBackend()  # or RedisBudgetBackend(redis_client, org_id="acme")
 limits = spec.budget_limits()
 
 def branch(name: str, idx: int) -> None:
@@ -750,6 +753,7 @@ def branch(name: str, idx: int) -> None:
         BudgetCharge(task_id=task_id, request_id=f"{name}-{idx}", signature=f"branch-{name}"),
         limits,
     )
+# Or: with safely(allow="...", calls=3, backend=backend, run=RunContext(...)): tool()
 ```
 
 The 4th parallel call hits `QuotaExceeded` when `calls=3`. Demo:
@@ -757,27 +761,30 @@ The 4th parallel call hits `QuotaExceeded` when `calls=3`. Demo:
 
 ### Rollout modes
 
-Flip enforcement gradually with one env var — no code change:
+Flip enforcement with env vars — `safely(...)` reads them:
 
 | `AGENT_SAFETY_DISTRIBUTED` | Behavior |
 |---|---|
-| `local` (default) | Single-process `safely(...)` only |
-| `shadow` | Verify envelopes but don't block on mismatch (log only) |
-| `canary` | Same as shadow; route a fraction of traffic to gateway |
-| `enforce` | Envelope verification is mandatory on the hot path |
+| `local` (default) | No envelope requirement |
+| `shadow` | If an envelope is present, verify it; on failure log and continue |
+| `canary` | Require a valid envelope for a hash-fraction of `task_id`s (`AGENT_SAFETY_CANARY_PERCENT`, default 10) |
+| `enforce` | Every `safely(...)` without an envelope fails closed |
 
 ```python
-from agent_safety.distributed import distributed_mode, should_enforce_envelope
+from agent_safety import should_require_envelope
 
-if should_enforce_envelope():
-    ...  # require envelope before tool runs
+# True under enforce, or under canary for this task_id's bucket
+if should_require_envelope(ctx.task_id):
+    ...
 ```
 
 ### Production
 
-For JWT service auth, Prometheus metrics, hash-chained audit, K8s manifests, and
-runbooks, see [**OPERATIONS.md**](OPERATIONS.md), [**THREAT_MODEL.md**](THREAT_MODEL.md),
-and [`deploy/`](deploy/).
+For env var reference, key rotation, Prometheus metrics, hash-chained audit, K8s
+manifests, and runbooks, see [**OPERATIONS.md**](OPERATIONS.md),
+[**THREAT_MODEL.md**](THREAT_MODEL.md), and [`deploy/`](deploy/). The gateway is a
+stdlib HTTP PDP suitable as a reference / sidecar — put mTLS and a hardened
+front door in front of it in production.
 
 ## Layout
 

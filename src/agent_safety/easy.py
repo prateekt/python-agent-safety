@@ -56,15 +56,21 @@ from __future__ import annotations
 
 import inspect
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Union, cast
 
 from .approval import ApprovalGate, ApprovalRequest
 from .audit import AuditEvent, AuditSink
-from .backends import BudgetBackend
+from .backends import BackendQuota, BudgetBackend, BudgetLimits
 from .constitution import ConstitutionGate
 from .context import safety_context
 from .decorators import guarded_async_tool, guarded_tool
+from .distributed import (
+    load_signing_keys,
+    should_require_envelope,
+    should_shadow_envelope,
+)
 from .envelope import CapabilityEnvelope, EnvelopeVerifier
+from .exceptions import PermissionDenied
 from .guards import (
     DenyPattern,
     Guard,
@@ -76,6 +82,7 @@ from .guards import (
     UnicodeSanitizer,
 )
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
+from .observability import StructuredLog
 from .permissions import PermissionSet
 from .policy import Policy
 from .preview import PreviewGate
@@ -344,28 +351,97 @@ def safely(
     * ``run=`` — install a :class:`~agent_safety.run.RunContext` for audit correlation.
     * ``envelope=`` — verify a signed :class:`~agent_safety.envelope.CapabilityEnvelope`
       on entry (hot path; no gateway hop per tool call).
-    * ``envelope_keys=`` — map of ``kid -> secret`` for envelope verification.
-    * ``backend=`` — optional :class:`~agent_safety.backends.BudgetBackend` for
-      shared budget state (used with gateway cold path).
+    * ``envelope_keys=`` — map of ``kid -> secret`` for envelope verification
+      (falls back to ``AGENT_SAFETY_SIGNING_KEYS``).
+    * ``backend=`` — shared :class:`~agent_safety.backends.BudgetBackend`; with
+      ``run=``, tool call/token charges go to the backend (Redis/memory) instead of
+      a process-local quota. When ``envelope=`` is also set, call budget was already
+      charged at mint time — the backend is used for token charges only.
+
+    Rollout (``AGENT_SAFETY_DISTRIBUTED``): ``enforce`` requires an envelope;
+    ``canary`` requires one for a hash-fraction of ``task_id``s; ``shadow`` verifies
+    when present but does not block on failure.
     """
+    keys = dict(envelope_keys) if envelope_keys else load_signing_keys()
+    task_id = run.task_id if run is not None else (envelope.task_id if envelope else None)
+    org = run.org_id if run is not None else None
+
+    if should_require_envelope(task_id, org_id=org) and envelope is None:
+        raise PermissionDenied("*", "capability envelope required in distributed mode")
+
     verifier: Optional[EnvelopeVerifier] = None
-    if envelope is not None and envelope_keys:
-        verifier = EnvelopeVerifier(envelope_keys)
+    if envelope is not None and keys:
+        verifier = EnvelopeVerifier(keys)
 
     run_mgr = run_context(run) if run is not None else None
     if run_mgr is not None:
         run_mgr.__enter__()
 
     try:
-        if envelope is not None and verifier is not None:
-            verifier.verify(envelope)
+        if envelope is not None:
+            if verifier is not None:
+                try:
+                    verifier.verify(envelope)
+                except PermissionDenied as exc:
+                    # Shadow: verify when present but do not block on failure.
+                    # Enforce / canary (required) / explicit local envelope: fail closed.
+                    if should_require_envelope(task_id, org_id=org):
+                        raise
+                    if should_shadow_envelope(org):
+                        StructuredLog(
+                            "warning",
+                            f"envelope verify failed (shadow): {exc}",
+                            task_id=task_id,
+                            request_id=run.request_id if run else None,
+                            capability=envelope.capability,
+                            decision="shadow_allow",
+                        ).emit()
+                    else:
+                        raise
+            elif should_require_envelope(task_id, org_id=org):
+                raise PermissionDenied(
+                    envelope.capability,
+                    "envelope_keys / AGENT_SAFETY_SIGNING_KEYS required to verify envelope",
+                )
 
-        quota = Quota(max_calls=calls, max_tokens=tokens) if (calls or tokens) else None
+        shared_quota: Optional[BackendQuota] = None
+        if backend is not None and run is not None:
+            limits = BudgetLimits(
+                max_calls=calls,
+                max_tokens=tokens,
+                rate_per_second=per_second if per_second is not None else (
+                    per_minute if per_minute is not None else None
+                ),
+                rate_window=1.0 if per_second is not None else (60.0 if per_minute else 1.0),
+                max_identical=no_repeats,
+                max_concurrent=at_most if isinstance(at_most, int) else None,
+                max_risk=risk_budget,
+            )
+            # Envelope mint already charged the call; only meter tokens on the backend.
+            shared_quota = BackendQuota(
+                backend,
+                task_id=run.task_id,
+                request_id=run.request_id,
+                org_id=run.org_id or "",
+                agent_id=run.agent_id,
+                limits=limits,
+                charge_calls=envelope is None,
+            )
+
+        quota: Optional[Quota] = None
+        if shared_quota is not None:
+            quota = cast(Quota, shared_quota)
+        elif calls or tokens:
+            quota = Quota(max_calls=calls, max_tokens=tokens)
+
         rate: Optional[RateLimit] = None
-        if per_second is not None:
-            rate = RateLimit(per_second=per_second)
-        elif per_minute is not None:
-            rate = RateLimit(per_minute=per_minute)
+        # When backend owns rate limits, skip local RateLimit to avoid double-charge.
+        if shared_quota is None:
+            if per_second is not None:
+                rate = RateLimit(per_second=per_second)
+            elif per_minute is not None:
+                rate = RateLimit(per_minute=per_minute)
+
         output_guards: List[Guard] = [RedactPII(), SecretScanner()] if hide_secrets else []
         input_guards = _input_guards(max_input, block, block_injections, clean_text)
         if honeytoken:
@@ -376,19 +452,25 @@ def safely(
         else:
             perms = _permissions(allow, deny)
 
+        loop = None if shared_quota is not None else (LoopGuard(no_repeats) if no_repeats else None)
+        conc = None if shared_quota is not None else _concurrency(at_most)
+        risk = None if shared_quota is not None else (
+            RiskBudget(risk_budget) if risk_budget else None
+        )
+
         with safety_context(
             perms,
             quota=quota,
             rate_limit=rate,
             deadline=Deadline(seconds) if seconds else None,
-            concurrency=_concurrency(at_most),
-            risk_budget=RiskBudget(risk_budget) if risk_budget else None,
+            concurrency=conc,
+            risk_budget=risk,
             cost_budget=CostBudget(_money(budget)) if budget is not None else None,
             timeout=timeout,
             memory=_bytes(memory) if memory is not None else None,
             input_guards=input_guards,
             output_guards=output_guards,
-            loop_guard=LoopGuard(no_repeats) if no_repeats else None,
+            loop_guard=loop,
             approval=_approval(ask),
             reasoning=_reasoning(explain),
             constitution=_constitution(rule, judge),
@@ -396,7 +478,6 @@ def safely(
             enforce=False if monitor else None,
             audit=_audit(log),
         ) as policy:
-            _ = backend  # reserved for distributed charge integration
             yield policy
     finally:
         if run_mgr is not None:

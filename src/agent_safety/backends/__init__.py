@@ -184,3 +184,81 @@ def default_memory_backend() -> MemoryBackend:
     if _default_backend is None:
         _default_backend = MemoryBackend()
     return _default_backend
+
+
+class BackendQuota:
+    """Quota adapter that charges a shared :class:`BudgetBackend` on each spend.
+
+    Duck-types :class:`~agent_safety.quota.Quota` so it plugs into
+    :class:`~agent_safety.policy.Policy` without a gateway hop per call when the
+    backend is local Redis/memory. Each charge uses a unique idempotency key
+    derived from the active :class:`~agent_safety.run.RunContext`.
+    """
+
+    def __init__(
+        self,
+        backend: BudgetBackend,
+        *,
+        task_id: str,
+        request_id: str,
+        org_id: str = "",
+        agent_id: str = "worker",
+        limits: Optional[BudgetLimits] = None,
+        charge_calls: bool = True,
+    ) -> None:
+        self._backend = backend
+        self._task_id = task_id
+        self._request_id = request_id
+        self._org_id = org_id
+        self._agent_id = agent_id
+        self._limits = limits or BudgetLimits()
+        self._charge_calls = charge_calls
+        self._seq = 0
+        self._lock = Lock()
+        self.max_calls = self._limits.max_calls
+        self.max_tokens = self._limits.max_tokens
+        self.calls_used = 0
+        self.tokens_used = 0
+
+    def charge_call(self, n: int = 1) -> None:
+        if not self._charge_calls:
+            return
+        with self._lock:
+            self._seq += 1
+            result = self._backend.charge(
+                BudgetCharge(
+                    task_id=self._task_id,
+                    request_id=f"{self._request_id}:call:{self._seq}",
+                    signature=f"call|{self._agent_id}",
+                    org_id=self._org_id,
+                    call_n=n,
+                ),
+                self._limits,
+            )
+            self.calls_used = result.calls_used
+
+    def charge_tokens(self, n: int) -> None:
+        if n < 0:
+            raise ValueError("token charge must be non-negative")
+        if n == 0:
+            return
+        with self._lock:
+            self._seq += 1
+            self._backend.charge(
+                BudgetCharge(
+                    task_id=self._task_id,
+                    request_id=f"{self._request_id}:tok:{self._seq}",
+                    signature=f"tokens|{self._agent_id}",
+                    org_id=self._org_id,
+                    call_n=0,
+                    tokens=n,
+                ),
+                self._limits,
+            )
+            self.tokens_used += n
+
+    def remaining_calls(self) -> Optional[int]:
+        return None if self.max_calls is None else max(0, self.max_calls - self.calls_used)
+
+    def remaining_tokens(self) -> Optional[int]:
+        return None if self.max_tokens is None else max(0, self.max_tokens - self.tokens_used)
