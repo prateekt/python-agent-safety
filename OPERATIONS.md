@@ -22,12 +22,19 @@ These are read by the library / gateway process:
 | `AGENT_SAFETY_SIGNING_SECRET` | gateway CLI | Single HMAC secret (base64 or raw) if not using the keys map |
 | `AGENT_SAFETY_SIGNING_KID` | gateway CLI | Key id to sign with (default `default`) |
 | `AGENT_SAFETY_JWT_SECRET` | gateway CLI | HS256 secret for service JWTs |
-| `AGENT_SAFETY_REDIS_URL` | gateway CLI | Optional Redis URL for shared budgets (`redis://...`) |
+| `AGENT_SAFETY_REDIS_URL` | gateway CLI + nonce store | Optional Redis URL for shared budgets **and** shared nonce replay protection |
 | `AGENT_SAFETY_GATEWAY_HOST` / `_PORT` | gateway CLI | Bind address (default `0.0.0.0:8765`) |
 
 Workers should receive **verify** secrets via `AGENT_SAFETY_SIGNING_KEYS` or
 `safely(..., envelope_keys=...)`. Never fetch secrets from `GET /v1/keys` —
 that endpoint returns **SHA-256 fingerprints** only (for rotation checks).
+
+## Authentication
+
+Gateway HTTP `POST /v1/mint`, `/v1/charge`, and `/v1/audit` require a Bearer
+service JWT when `GatewayConfig.require_auth=True` (the default, including the
+CLI). Issue tokens with `make_service_jwt(jwt_secret)`. Health/ready/metrics/keys
+stay unauthenticated for probes. Set `require_auth=False` only for local demos.
 
 ## Health checks
 
@@ -42,6 +49,13 @@ that endpoint returns **SHA-256 fingerprints** only (for rotation checks).
 2. Configure gateway to sign with the new `kid` (`AGENT_SAFETY_SIGNING_KID`).
 3. Overlap window: keep both kids trusted on workers (e.g. 24h).
 4. Remove the old `kid` after overlap; confirm fingerprints via `/v1/keys`.
+
+## Envelope replay protection
+
+On verify, `EnvelopeVerifier` spends the envelope nonce in a
+:class:`~agent_safety.nonces.NonceStore`. Pass the same store to every worker
+(or set `AGENT_SAFETY_REDIS_URL` so `nonce_store_from_env()` / `safely()` share
+Redis). A replayed envelope fails closed with `PermissionDenied`.
 
 ## Rollout
 

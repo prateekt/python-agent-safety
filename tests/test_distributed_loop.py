@@ -13,7 +13,7 @@ from agent_safety.run import RunContext
 def test_gateway_mint_and_worker_verify():
     secret = b"gateway-signing-secret-32bytes!!"
     backend = MemoryBackend()
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, backend=backend))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend))
     spec = PolicySpec(allow=("weather.read",), calls=5)
     gw.config.registry.publish(spec)
 

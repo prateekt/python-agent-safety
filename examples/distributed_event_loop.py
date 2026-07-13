@@ -30,7 +30,7 @@ def main() -> None:
     secret = b"dev-signing-secret-32-bytes-long!!"
     spec = PolicySpec(allow=("weather.read",), calls=5, no_repeats=3)
     backend = __import__("agent_safety.backends", fromlist=["MemoryBackend"]).MemoryBackend()
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, backend=backend, port=18765))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend, port=18765))
     gw.config.registry.publish(spec)
     serve_gateway(gw, port=18765)
 

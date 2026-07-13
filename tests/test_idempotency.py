@@ -8,7 +8,7 @@ from agent_safety.policy_spec import PolicySpec
 def test_gateway_mint_idempotent_request_id():
     secret = b"idempotent-test-signing-secret!!"
     backend = MemoryBackend()
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, backend=backend))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend))
     spec = PolicySpec(allow=("tool",), calls=2)
     body = {
         "task_id": "task-1",

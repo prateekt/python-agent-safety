@@ -55,6 +55,7 @@ def gateway_server():
     gw = PolicyGateway(GatewayConfig(
         signing_secret=secret,
         jwt_secret=jwt_secret,
+        require_auth=True,
         backend=__import__("agent_safety.backends", fromlist=["MemoryBackend"]).MemoryBackend(),
     ))
     gw.config.registry.publish(spec)
@@ -132,6 +133,19 @@ def test_charge_and_audit_endpoints(gateway_server):
     }, token=token)
     assert status == 202
     assert audit["count"] == 1
+
+
+def test_mint_requires_auth(gateway_server):
+    base, _, _, spec = gateway_server
+    status, payload = _post(f"{base}/v1/mint", {
+        "task_id": "t-unauth",
+        "request_id": "r-unauth",
+        "capability": "tool.read",
+        "policy_spec": spec.to_dict(),
+    })
+    assert status == 401
+    assert payload["ok"] is False
+    assert "auth" in payload.get("error", "").lower()
 
 
 def test_approval_required(gateway_server):

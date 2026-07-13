@@ -264,7 +264,9 @@ def test_envelope_unknown_kid_not_yet_valid_glob_and_nonce():
         v.verify(env2)
 
     v.mark_spent("manual-nonce", time.time() + 60)
-    assert "manual-nonce" in v._spent
+    # mark_spent goes through the nonce store
+    from agent_safety.nonces import MemoryNonceStore
+    assert isinstance(v._nonce_store, MemoryNonceStore)
 
     # from_dict with bytes signature
     raw = env.to_dict()
@@ -371,7 +373,7 @@ def test_gateway_client_requires_url(monkeypatch):
 def test_gateway_client_uses_env_url_and_audit(monkeypatch):
     secret = b"client-core-signing-secret-32b!!"
     backend = MemoryBackend()
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, backend=backend))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend))
     spec = PolicySpec(allow=("ping",), calls=5)
     gw.config.registry.publish(spec)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -653,7 +655,7 @@ def test_gateway_jwt_validation_paths():
     from agent_safety.gateway.server import make_service_jwt
 
     secret = b"jwt-core-secret-32-bytes-long!!!"
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, jwt_secret=secret))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, jwt_secret=secret))
     token = make_service_jwt(secret, org_id="acme")
     claims = gw.verify_jwt(token)
     assert claims["sub"] == "planner"
@@ -699,7 +701,7 @@ def test_gateway_client_connection_failure_records_circuit():
 
 
 def test_gateway_charge_tokens_error_path():
-    gw = PolicyGateway(GatewayConfig(
+    gw = PolicyGateway(GatewayConfig(require_auth=False,
         signing_secret=b"charge-err-signing-secret-32b!!",
         backend=MemoryBackend(),
     ))

@@ -107,6 +107,7 @@ from .guards import (
 from .integrations import DIALECTS, ToolCall, ToolRegistry, ToolSpec, parse_tool_calls
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .mcp import SafeMCP, guard_mcp
+from .nonces import MemoryNonceStore, RedisNonceStore, nonce_store_from_env
 from .observability import CircuitBreaker, PrometheusMetrics, StructuredLog
 from .permissions import PermissionSet
 from .policy import Explanation, Policy
@@ -263,6 +264,9 @@ __all__ = [
     "CapabilityEnvelope",
     "EnvelopeSigner",
     "EnvelopeVerifier",
+    "MemoryNonceStore",
+    "RedisNonceStore",
+    "nonce_store_from_env",
     "ToolRequest",
     "ToolResult",
     "MintResponse",

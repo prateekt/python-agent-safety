@@ -32,10 +32,12 @@ See [`THREAT_MODEL.md`](THREAT_MODEL.md) for the trust boundaries, what is in an
 out of scope, residual risks, and a mapping to the OWASP LLM Top 10.
 
 **Distributed deployments:** run the policy gateway behind mTLS (or an equivalent
-service mesh), rotate signing keys via overlapping `kid`s, and give workers
-verify-only secrets through `AGENT_SAFETY_SIGNING_KEYS` — never mint from a
-worker. `GET /v1/keys` returns SHA-256 fingerprints only. Treat Redis as a
-trusted budget store. See [`OPERATIONS.md`](OPERATIONS.md).
+service mesh), keep `require_auth=True` (Bearer JWT on mint/charge/audit), rotate
+signing keys via overlapping `kid`s, and give workers verify-only secrets through
+`AGENT_SAFETY_SIGNING_KEYS` — never mint from a worker. Share a `NonceStore`
+(Redis via `AGENT_SAFETY_REDIS_URL`) across workers so envelope replay fails
+closed. `GET /v1/keys` returns SHA-256 fingerprints only. Treat Redis as a
+trusted budget/nonce store. See [`OPERATIONS.md`](OPERATIONS.md).
 
 ## Reducing your own attack surface
 
