@@ -269,7 +269,7 @@ def live_gateway():
 
     secret = b"parity-gateway-signing-secret!!"
     backend = MemoryBackend()
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, backend=backend))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend))
     spec = PolicySpec(allow=("search", "read_file"), calls=5, no_repeats=3)
     gw.config.registry.publish(spec)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

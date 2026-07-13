@@ -36,6 +36,7 @@ class GatewayConfig:
     kid: str = "default"
     org_id: str = ""
     rate_limit_per_minute: int = 1000
+    require_auth: bool = True
     backend: Any = field(default_factory=MemoryBackend)
     registry: PolicyRegistry = field(default_factory=PolicyRegistry)
     circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
@@ -48,9 +49,18 @@ class PolicyGateway:
         self.config = config or GatewayConfig()
         self._signer = EnvelopeSigner(self.config.signing_secret, kid=self.config.kid)
         self._audit = HashChainSink(ListSink())
-        self._spent_nonces: Dict[str, float] = {}
         self._rate_counts: Dict[str, List[float]] = {}
         self._lock = threading.Lock()
+
+    def _require_auth(self, auth_token: Optional[str]) -> Dict[str, Any]:
+        """Verify service JWT when ``require_auth`` is enabled (fail closed)."""
+        if not self.config.require_auth:
+            if auth_token:
+                return self.verify_jwt(auth_token)
+            return {}
+        if not auth_token:
+            raise ValueError("authentication required")
+        return self.verify_jwt(auth_token)
 
     def verify_jwt(self, token: str, *, required_sub: str = "planner") -> Dict[str, Any]:
         """Minimal HS256 JWT verification (stdlib only)."""
@@ -96,8 +106,8 @@ class PolicyGateway:
             return MintResponse(ok=False, error="gateway circuit breaker open")
 
         try:
-            if auth_token:
-                claims = self.verify_jwt(auth_token)
+            claims = self._require_auth(auth_token)
+            if claims:
                 self._check_service_rate(str(claims.get("sub", "unknown")))
 
             spec_data = body.get("policy_spec")
@@ -146,8 +156,6 @@ class PolicyGateway:
                 org_id=org_id,
                 approval_id=body.get("approval_id"),
             )
-            with self._lock:
-                self._spent_nonces[envelope.nonce] = envelope.expires_at
 
             audit_id = uuid.uuid4().hex
             self._audit(AuditEvent(
@@ -175,8 +183,9 @@ class PolicyGateway:
             StructuredLog("error", f"mint failed: {exc}").emit()
             return MintResponse(ok=False, error=str(exc))
 
-    def charge_tokens(self, body: Dict[str, Any]) -> Dict[str, Any]:
+    def charge_tokens(self, body: Dict[str, Any], *, auth_token: Optional[str] = None) -> Dict[str, Any]:
         try:
+            self._require_auth(auth_token)
             spec = PolicySpec.from_dict(body.get("policy_spec", {}))
             charge = BudgetCharge(
                 task_id=str(body["task_id"]),
@@ -192,7 +201,11 @@ class PolicyGateway:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    def ingest_audit(self, body: Dict[str, Any]) -> Dict[str, Any]:
+    def ingest_audit(self, body: Dict[str, Any], *, auth_token: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            self._require_auth(auth_token)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
         events = body.get("events", [])
         for raw in events:
             self._audit(AuditEvent(
@@ -274,7 +287,14 @@ def create_handler(gw_instance: PolicyGateway) -> Type[BaseHTTPRequestHandler]:
             token = self._auth_token()
             if self.path == "/v1/mint":
                 resp = self.gateway.mint(body, auth_token=token)
-                code = 200 if resp.ok or resp.approval_required else 403
+                if resp.error == "authentication required" or (
+                    resp.error and "jwt" in resp.error.lower()
+                ):
+                    code = 401
+                elif resp.ok or resp.approval_required:
+                    code = 200
+                else:
+                    code = 403
                 self._send_json(code, {
                     "ok": resp.ok,
                     "envelope": resp.envelope,
@@ -283,9 +303,13 @@ def create_handler(gw_instance: PolicyGateway) -> Type[BaseHTTPRequestHandler]:
                     "audit_id": resp.audit_id,
                 })
             elif self.path == "/v1/charge":
-                self._send_json(200, self.gateway.charge_tokens(body))
+                payload = self.gateway.charge_tokens(body, auth_token=token)
+                code = 401 if payload.get("error") == "authentication required" else 200
+                self._send_json(code, payload)
             elif self.path == "/v1/audit":
-                self._send_json(202, self.gateway.ingest_audit(body))
+                payload = self.gateway.ingest_audit(body, auth_token=token)
+                code = 401 if payload.get("error") == "authentication required" else 202
+                self._send_json(code, payload)
             else:
                 self._send_json(404, {"error": "not found"})
 

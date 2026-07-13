@@ -14,7 +14,7 @@ from agent_safety.policy_spec import PolicySpec
 def main() -> None:
     secret = b"load-test-signing-secret-32b!!!"
     backend = MemoryBackend()
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, backend=backend))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend))
     spec = PolicySpec(allow=("tool",), calls=100_000)
 
     n = 500

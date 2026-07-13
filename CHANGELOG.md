@@ -5,9 +5,27 @@ All notable changes to `agent_safety` are documented here. The format follows
 [Semantic Versioning](https://semver.org/) from 1.0 onward (pre-1.0, minor
 versions may include additive API changes).
 
+## [Unreleased]
+
 ## [0.9.0]
 
 ### Added
+- **Distributed agent loops** — two-tier cold/hot enforcement for multi-worker
+  agents:
+  - **Policy Gateway** (`python -m agent_safety.gateway`) with `/v1/mint`,
+    `/v1/charge`, `/v1/audit`, health/ready/metrics; JWT service auth
+    (`require_auth=True` by default); optional Redis budget store.
+  - **`CapabilityEnvelope`** — short-lived HMAC-signed capability proof; workers
+    verify locally on the hot path.
+  - **`BudgetBackend`** — atomic `charge()` with idempotent `request_id`
+    (`MemoryBackend`, optional `RedisBudgetBackend`).
+  - **`PolicySpec` / `PolicyRegistry`**, **`RunContext`**, event types
+    (`ToolRequest` / `ToolResult`), rollout modes (`local` / `shadow` /
+    `canary` / `enforce` via `AGENT_SAFETY_DISTRIBUTED`).
+  - **`safely(..., run=, envelope=, envelope_keys=, backend=, nonce_store=)`**
+    wired for distributed use; shared **`NonceStore`** (memory or Redis) for
+    cross-worker envelope replay protection.
+  - Examples, `OPERATIONS.md`, deploy skeletons (`deploy/`).
 - **`timeout=` — no hangups.** A hard per-call limit so no single call can hang or
   deadlock: async calls are cancelled via `asyncio.wait_for`; sync calls use a
   `SIGALRM` timer (Unix main thread) or an abandoned worker thread otherwise. Raises
@@ -46,10 +64,6 @@ versions may include additive API changes).
   `price=`/`model=` still overrides. Unknown auto-detected models are tokens-only, except
   when a money budget is active (then `metered` asks for an explicit `price=` rather than
   letting the budget silently do nothing).
-
-## [Unreleased]
-
-### Added
 - A public, CI-gated **attack scorecard** (`benchmarks/attack_suite.py` →
   `benchmarks/SCORECARD.md`): 13 known agent-attack scenarios across the OWASP LLM
   Top 10, each asserting containment, plus 4 legitimate-action controls.
@@ -68,7 +82,8 @@ versions may include additive API changes).
 
 ### Changed
 - README re-framed around action governance ("what an agent may *do*"), with the
-  scorecard summary and the content-vs-action framing.
+  scorecard summary, content-vs-action framing, and a **Distributed agent loops**
+  section (patterns, rollout, production pointers).
 
 ## [0.8.0]
 

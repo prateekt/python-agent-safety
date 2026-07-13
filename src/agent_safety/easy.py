@@ -82,6 +82,7 @@ from .guards import (
     UnicodeSanitizer,
 )
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
+from .nonces import NonceStore, nonce_store_from_env
 from .observability import StructuredLog
 from .permissions import PermissionSet
 from .policy import Policy
@@ -340,6 +341,7 @@ def safely(
     envelope: Optional[CapabilityEnvelope] = None,
     envelope_keys: Optional[Dict[str, bytes]] = None,
     backend: Optional[BudgetBackend] = None,
+    nonce_store: Optional[NonceStore] = None,
 ) -> Iterator[Policy]:
     """Run a block of code under simple, plain-English safety rules.
 
@@ -357,6 +359,9 @@ def safely(
       ``run=``, tool call/token charges go to the backend (Redis/memory) instead of
       a process-local quota. When ``envelope=`` is also set, call budget was already
       charged at mint time — the backend is used for token charges only.
+    * ``nonce_store=`` — shared :class:`~agent_safety.nonces.NonceStore` for
+      cross-worker envelope replay protection (defaults to Redis when
+      ``AGENT_SAFETY_REDIS_URL`` is set, else a process-local store).
 
     Rollout (``AGENT_SAFETY_DISTRIBUTED``): ``enforce`` requires an envelope;
     ``canary`` requires one for a hash-fraction of ``task_id``s; ``shadow`` verifies
@@ -369,9 +374,13 @@ def safely(
     if should_require_envelope(task_id, org_id=org) and envelope is None:
         raise PermissionDenied("*", "capability envelope required in distributed mode")
 
+    store = nonce_store
+    if store is None and envelope is not None:
+        store = nonce_store_from_env()
+
     verifier: Optional[EnvelopeVerifier] = None
     if envelope is not None and keys:
-        verifier = EnvelopeVerifier(keys)
+        verifier = EnvelopeVerifier(keys, nonce_store=store)
 
     run_mgr = run_context(run) if run is not None else None
     if run_mgr is not None:

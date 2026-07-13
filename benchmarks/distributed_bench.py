@@ -21,7 +21,7 @@ def _p99(samples: list) -> float:
 
 def bench_envelope_verify(n: int = 1000) -> None:
     secret = b"bench-signing-secret-32bytes!!!"
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret))
     spec = PolicySpec(allow=("x",), calls=1000)
     resp = gw.mint({
         "task_id": "t",

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 from .exceptions import PermissionDenied
+from .nonces import MemoryNonceStore, NonceStore
 
 CLOCK_SKEW_TOLERANCE = 30.0
 DEFAULT_TTL = 120.0
@@ -135,12 +136,22 @@ class EnvelopeSigner:
 
 
 class EnvelopeVerifier:
-    """Verify capability envelopes (workers / PEP)."""
+    """Verify capability envelopes (workers / PEP).
 
-    def __init__(self, keys: Dict[str, bytes], *, clock_skew: float = CLOCK_SKEW_TOLERANCE) -> None:
+    Pass a shared :class:`~agent_safety.nonces.NonceStore` (Memory or Redis) so
+    replay protection works across workers, not just within one process.
+    """
+
+    def __init__(
+        self,
+        keys: Dict[str, bytes],
+        *,
+        clock_skew: float = CLOCK_SKEW_TOLERANCE,
+        nonce_store: Optional[NonceStore] = None,
+    ) -> None:
         self._keys = keys
         self._clock_skew = clock_skew
-        self._spent: Dict[str, float] = {}
+        self._nonce_store: NonceStore = nonce_store or MemoryNonceStore()
 
     def verify(
         self,
@@ -179,12 +190,12 @@ class EnvelopeVerifier:
             if not any(_matches(cap, p) for p in envelope.allowed_capabilities):
                 raise PermissionDenied(cap, "capability not in envelope allow-list")
 
-        if envelope.nonce in self._spent:
+        expires = envelope.expires_at + self._clock_skew
+        if not self._nonce_store.spend(envelope.nonce, expires):
             raise PermissionDenied(envelope.capability, "envelope nonce already spent")
-        self._spent[envelope.nonce] = envelope.expires_at + self._clock_skew
 
     def mark_spent(self, nonce: str, expires_at: float) -> None:
-        self._spent[nonce] = expires_at
+        self._nonce_store.spend(nonce, expires_at)
 
 
 def _matches(capability: str, pattern: str) -> bool:

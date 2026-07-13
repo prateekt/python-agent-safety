@@ -23,7 +23,7 @@ def _free_port() -> int:
 def live_gateway():
     secret = b"client-test-signing-secret-32b!"
     backend = __import__("agent_safety.backends", fromlist=["MemoryBackend"]).MemoryBackend()
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, backend=backend))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend))
     spec = PolicySpec(allow=("search",), calls=5)
     gw.config.registry.publish(spec)
     port = _free_port()

@@ -46,7 +46,7 @@ def test_gateway_fail_closed_on_circuit_open():
     secret = b"gateway-signing-secret-32bytes!!"
     cb = CircuitBreaker(failure_threshold=1, open_seconds=60.0)
     cb.record_failure()
-    gw = PolicyGateway(GatewayConfig(signing_secret=secret, circuit_breaker=cb))
+    gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, circuit_breaker=cb))
     resp = gw.mint({
         "task_id": "t",
         "capability": "x",

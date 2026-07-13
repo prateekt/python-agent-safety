@@ -596,7 +596,7 @@ python examples/providers.py       # one policy across Anthropic/OpenAI/Gemini
 python examples/mcp_agent.py       # govern an MCP server's tools with safely(...)
 python examples/benchmark.py       # per-call overhead on your machine
 python benchmarks/attack_suite.py  # the attack scorecard (what's contained)
-python -m pytest                   # 417 tests (incl. the CI-gated attack suite)
+python -m pytest                   # 424 tests (incl. the CI-gated attack suite)
 python -m ruff check . && python -m mypy   # lint + strict type-check (matches CI)
 
 # Optional live check against the real Gemini API (your key, never hardcoded):
@@ -671,6 +671,8 @@ with safely(envelope=envelope, envelope_keys={"default": signing_secret}, run=ct
 - **`backend=`** — shared `BudgetBackend`; with `run=`, tool charges hit Redis /
   memory instead of a process-local quota. With `envelope=` as well, mint already
   charged the call — the backend meters tokens only.
+- **`nonce_store=`** — shared spent-nonce store so a replayed envelope fails on
+  every worker (Redis when `AGENT_SAFETY_REDIS_URL` is set, else process-local).
 
 Start the gateway locally:
 
@@ -818,6 +820,7 @@ src/agent_safety/
   run.py           RunContext — task_id / request_id correlation
   policy_spec.py   PolicySpec + PolicyRegistry — serializable distributed policy
   envelope.py      CapabilityEnvelope sign/verify (HMAC; workers verify-only)
+  nonces.py        Shared NonceStore (memory / Redis) for envelope replay protection
   events.py        ToolRequest / ToolResult event types
   gateway/         Policy Gateway PDP (mint / charge / audit / metrics)
   distributed.py   Rollout modes: shadow / canary / enforce
