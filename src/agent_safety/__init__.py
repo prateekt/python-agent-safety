@@ -47,6 +47,10 @@ from .backends import (
     MemoryBackend,
     default_memory_backend,
 )
+from .backends.dynamo_backend import DynamoBudgetBackend, dynamo_backend
+from .backends.mongo_backend import MongoBudgetBackend, mongo_backend
+from .backends.redis_backend import RedisBudgetBackend, redis_backend
+from .backends.sql_backend import SqlBudgetBackend, sql_backend
 from .constitution import ConstitutionGate
 from .context import (
     charge_call,
@@ -107,7 +111,14 @@ from .guards import (
 from .integrations import DIALECTS, ToolCall, ToolRegistry, ToolSpec, parse_tool_calls
 from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
 from .mcp import SafeMCP, guard_mcp
-from .nonces import MemoryNonceStore, RedisNonceStore, nonce_store_from_env
+from .nonces import (
+    DynamoNonceStore,
+    MemoryNonceStore,
+    MongoNonceStore,
+    RedisNonceStore,
+    SqlNonceStore,
+    nonce_store_from_env,
+)
 from .observability import CircuitBreaker, PrometheusMetrics, StructuredLog
 from .permissions import PermissionSet
 from .policy import Explanation, Policy
@@ -258,6 +269,14 @@ __all__ = [
     "ChargeResult",
     "MemoryBackend",
     "default_memory_backend",
+    "SqlBudgetBackend",
+    "sql_backend",
+    "RedisBudgetBackend",
+    "redis_backend",
+    "MongoBudgetBackend",
+    "mongo_backend",
+    "DynamoBudgetBackend",
+    "dynamo_backend",
     "PolicySpec",
     "PolicyRegistry",
     "safely_from_spec",
@@ -266,6 +285,9 @@ __all__ = [
     "EnvelopeVerifier",
     "MemoryNonceStore",
     "RedisNonceStore",
+    "SqlNonceStore",
+    "MongoNonceStore",
+    "DynamoNonceStore",
     "nonce_store_from_env",
     "ToolRequest",
     "ToolResult",
