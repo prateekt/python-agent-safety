@@ -39,6 +39,10 @@ Changelog = "https://github.com/prateekt/python-agent-safety/blob/main/CHANGELOG
 
 [project.optional-dependencies]
 distributed = ["redis>=4.0"]
+mongo = ["pymongo>=4.0"]
+dynamodb = ["boto3>=1.26"]
+# Convenience meta-extra: Redis + common NoSQL drivers (still bring-your-own hosts)
+stores = ["redis>=4.0", "pymongo>=4.0", "boto3>=1.26"]
 observability = []
 dev = ["pytest>=7.0", "mypy>=1.8", "ruff>=0.4"]
 

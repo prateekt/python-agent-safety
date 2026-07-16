@@ -7,6 +7,16 @@ versions may include additive API changes).
 
 ## [Unreleased]
 
+### Added
+- **SQL budget / nonce plugins** — `SqlBudgetBackend` and `SqlNonceStore` accept a
+  user-supplied DB-API `connect()` callable (SQLite / Postgres / MySQL). The
+  library does not host a database; `ensure_schema()` creates `agent_safety_*`
+  tables in your existing store.
+- **NoSQL budget / nonce plugins** — `MongoBudgetBackend` / `MongoNonceStore`
+  (bring-your-own `pymongo` client; extra `[mongo]`) and `DynamoBudgetBackend` /
+  `DynamoNonceStore` (bring-your-own boto3 client + table; extra `[dynamodb]`).
+  Meta-extra `[stores]` installs Redis + Mongo + Dynamo drivers only.
+
 ## [0.9.0]
 
 ### Added

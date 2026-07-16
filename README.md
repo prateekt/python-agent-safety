@@ -668,11 +668,56 @@ with safely(envelope=envelope, envelope_keys={"default": signing_secret}, run=ct
 - **`CapabilityEnvelope`** — short-lived, signed proof that *this* capability
   was minted against *this* policy hash; workers verify with `envelope_keys`
   or `AGENT_SAFETY_SIGNING_KEYS` (HMAC today; no per-call gateway hop).
-- **`backend=`** — shared `BudgetBackend`; with `run=`, tool charges hit Redis /
-  memory instead of a process-local quota. With `envelope=` as well, mint already
-  charged the call — the backend meters tokens only.
+- **`backend=`** — shared `BudgetBackend`; with `run=`, tool charges hit your
+  store (memory, Redis, or SQL) instead of a process-local quota. With `envelope=`
+  as well, mint already charged the call — the backend meters tokens only.
 - **`nonce_store=`** — shared spent-nonce store so a replayed envelope fails on
-  every worker (Redis when `AGENT_SAFETY_REDIS_URL` is set, else process-local).
+  every worker (Redis when `AGENT_SAFETY_REDIS_URL` is set, SQL via
+  `SqlNonceStore`, else process-local).
+
+### Bring your own database (no hosting)
+
+The library does **not** run or bundle a database server. Plug in a client or
+DB-API connection to a store you already operate:
+
+| Store | Budget backend | Nonce store | Extra |
+|---|---|---|---|
+| Memory (default) | `MemoryBackend` | `MemoryNonceStore` | — |
+| Redis | `RedisBudgetBackend` | `RedisNonceStore` | `[distributed]` |
+| SQL (SQLite / Postgres / MySQL) | `SqlBudgetBackend` | `SqlNonceStore` | — (stdlib sqlite3 or your driver) |
+| MongoDB | `MongoBudgetBackend` | `MongoNonceStore` | `[mongo]` |
+| DynamoDB | `DynamoBudgetBackend` | `DynamoNonceStore` | `[dynamodb]` |
+
+```python
+# SQL
+import sqlite3
+from agent_safety import SqlBudgetBackend, SqlNonceStore
+backend = SqlBudgetBackend(lambda: sqlite3.connect("budgets.db"))
+backend.ensure_schema()
+
+# MongoDB — your existing cluster
+from pymongo import MongoClient
+from agent_safety import MongoBudgetBackend, MongoNonceStore
+client = MongoClient(MONGODB_URI)
+backend = MongoBudgetBackend(client, db_name="agent_safety")
+nonces = MongoNonceStore(client)
+
+# DynamoDB — your existing table (pk: string)
+import boto3
+from agent_safety import DynamoBudgetBackend, DynamoNonceStore
+ddb = boto3.client("dynamodb")
+backend = DynamoBudgetBackend(ddb, table_name="agent-safety-budgets")
+nonces = DynamoNonceStore(ddb, table_name="agent-safety-budgets")
+```
+
+`pip install agent-safety[stores]` pulls Redis + pymongo + boto3 drivers only —
+hosts stay yours. Prefer Redis or SQL when you need strongest cross-process
+atomicity; Mongo/Dynamo use a process lock plus conditional writes (fine for
+typical worker pools; pair with a single writer or Redis if you need Lua-level
+atomicity across many processes).
+
+Use a real DB file / managed URL — plain `sqlite3.connect(":memory:")` is a
+fresh DB per connection and will not share state across charges.
 
 Start the gateway locally:
 
@@ -747,7 +792,7 @@ call budget and must not overspend collectively.
 unique `request_id` (idempotent retries safe).
 
 ```python
-backend = MemoryBackend()  # or RedisBudgetBackend(redis_client, org_id="acme")
+backend = MemoryBackend()  # or RedisBudgetBackend(...) / SqlBudgetBackend(connect)
 limits = spec.budget_limits()
 
 def branch(name: str, idx: int) -> None:
@@ -816,11 +861,11 @@ src/agent_safety/
   schema.py        tool_schema / Param — derive JSON-Schema from a signature
   validation.py    validate_args — check tool inputs against the declared schema
   integrations.py  ToolRegistry — schema dialects, neutral dispatch, parse_tool_calls
-  backends/        BudgetCharge + MemoryBackend (+ optional RedisBudgetBackend)
+  backends/        BudgetCharge + MemoryBackend (+ Redis / SQL / Mongo / Dynamo plugins)
   run.py           RunContext — task_id / request_id correlation
   policy_spec.py   PolicySpec + PolicyRegistry — serializable distributed policy
   envelope.py      CapabilityEnvelope sign/verify (HMAC; workers verify-only)
-  nonces.py        Shared NonceStore (memory / Redis) for envelope replay protection
+  nonces.py        Shared NonceStore (memory / Redis / SQL / Mongo / Dynamo)
   events.py        ToolRequest / ToolResult event types
   gateway/         Policy Gateway PDP (mint / charge / audit / metrics)
   distributed.py   Rollout modes: shadow / canary / enforce
@@ -862,3 +907,76 @@ risks, and a mapping to the **OWASP LLM Top 10** — see
 [**THREAT_MODEL.md**](THREAT_MODEL.md). To report a vulnerability, see
 [**SECURITY.md**](SECURITY.md). Release history is in
 [**CHANGELOG.md**](CHANGELOG.md).
+
+## Budget & nonce stores (bring your own)
+
+`agent-safety` never hosts a database. Pass a client or connection factory to a
+store you already run; budgets and envelope nonces share the same plugin shape
+(`BudgetBackend` / `NonceStore`).
+
+### First-class plugins
+
+| Store | Budget | Nonce | Install |
+|---|---|---|---|
+| In-process memory | `MemoryBackend` | `MemoryNonceStore` | default |
+| Redis | `RedisBudgetBackend` | `RedisNonceStore` | `agent-safety[distributed]` |
+| SQL — SQLite / Postgres / MySQL | `SqlBudgetBackend` | `SqlNonceStore` | stdlib `sqlite3` or your driver |
+| MongoDB | `MongoBudgetBackend` | `MongoNonceStore` | `agent-safety[mongo]` |
+| DynamoDB | `DynamoBudgetBackend` | `DynamoNonceStore` | `agent-safety[dynamodb]` |
+
+```bash
+pip install agent-safety[stores]   # redis + pymongo + boto3 drivers only
+```
+
+```python
+from agent_safety import (
+    SqlBudgetBackend, SqlNonceStore,
+    MongoBudgetBackend, MongoNonceStore,
+    DynamoBudgetBackend, DynamoNonceStore,
+    RedisBudgetBackend, RedisNonceStore,
+    safely,
+)
+
+# Point at your existing host — examples only
+sql = SqlBudgetBackend(lambda: sqlite3.connect("budgets.db"))  # or psycopg.connect(...)
+sql.ensure_schema()
+
+mongo = MongoBudgetBackend(MongoClient(MONGODB_URI), db_name="agent_safety")
+dynamo = DynamoBudgetBackend(boto3.client("dynamodb"), table_name="agent-safety-budgets")
+```
+
+Wire with `safely(..., backend=..., nonce_store=..., run=...)`. Ops notes:
+[OPERATIONS.md](OPERATIONS.md).
+
+### Works without a dedicated plugin
+
+These speak a protocol we already support — use the matching backend:
+
+| Your store | Use |
+|---|---|
+| Valkey, KeyDB, Redis Cluster | `RedisBudgetBackend` / `RedisNonceStore` |
+| MariaDB | `SqlBudgetBackend(..., dialect="mysql")` |
+| CockroachDB, Neon, Supabase, RDS Postgres, AlloyDB | `dialect="postgres"` |
+| Turso, Cloudflare D1, other SQLite wire-compat | `dialect="sqlite"` |
+| Amazon DocumentDB / Cosmos DB (Mongo API) | `MongoBudgetBackend` |
+
+### Not first-class (yet)
+
+No dedicated backend today for **Cassandra/Scylla**, **Firestore**, **Cosmos DB
+(SQL API)**, **SQL Server**, or **Oracle**. Many SQL Server/Oracle drivers are
+still usable via `SqlBudgetBackend` if they accept `?` placeholders (untested —
+pin `dialect="sqlite"` for `?`, or open an issue). Anything else: implement the
+two small protocols and pass them in:
+
+```python
+class MyBudgetBackend:  # charge() + release_concurrency()
+    ...
+
+class MyNonceStore:  # spend(nonce, expires_at) -> bool
+    ...
+```
+
+**Atomicity tip:** Redis (Lua) and SQL (`BEGIN` / row locks) are strongest for
+multi-process workers. Mongo and Dynamo use a process lock plus conditional
+writes — fine for typical pools; prefer Redis/SQL when many processes charge the
+same task concurrently.

@@ -55,7 +55,8 @@ stay unauthenticated for probes. Set `require_auth=False` only for local demos.
 On verify, `EnvelopeVerifier` spends the envelope nonce in a
 :class:`~agent_safety.nonces.NonceStore`. Pass the same store to every worker
 (or set `AGENT_SAFETY_REDIS_URL` so `nonce_store_from_env()` / `safely()` share
-Redis). A replayed envelope fails closed with `PermissionDenied`.
+Redis; or pass `SqlNonceStore(connect)` for a SQL-backed spend set). A replayed
+envelope fails closed with `PermissionDenied`.
 
 ## Rollout
 
@@ -69,9 +70,21 @@ Modes are enforced inside `safely(...)`:
 ## Shared budgets
 
 Pass `backend=` + `run=` to `safely(...)` so each tool call/token charge hits the
-shared store (Memory or Redis). When `envelope=` is also set, the **call** was
-already charged at gateway mint time — the backend meters **tokens** only on the
-hot path.
+shared store (Memory, Redis, or SQL). When `envelope=` is also set, the **call**
+was already charged at gateway mint time — the backend meters **tokens** only on
+the hot path.
+
+### SQL / Mongo / Dynamo plugins (bring your own store)
+
+`SqlBudgetBackend`, `MongoBudgetBackend`, and `DynamoBudgetBackend` (plus matching
+`*NonceStore` classes) accept a connection/client you supply. The library never
+hosts Postgres, MongoDB, or DynamoDB for you.
+
+- **SQL** — DB-API `connect()`; dialects `auto` / `sqlite` / `postgres` / `mysql`;
+  call `ensure_schema()` once.
+- **MongoDB** — `pymongo` `MongoClient` (`pip install agent-safety[mongo]`).
+- **DynamoDB** — boto3 DynamoDB client + table with string partition key `pk`
+  (`pip install agent-safety[dynamodb]`).
 
 ## Alerting
 

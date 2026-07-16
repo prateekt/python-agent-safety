@@ -138,7 +138,7 @@ class EnvelopeSigner:
 class EnvelopeVerifier:
     """Verify capability envelopes (workers / PEP).
 
-    Pass a shared :class:`~agent_safety.nonces.NonceStore` (Memory or Redis) so
+    Pass a shared :class:`~agent_safety.nonces.NonceStore` (Memory, Redis, or SQL) so
     replay protection works across workers, not just within one process.
     """
 
