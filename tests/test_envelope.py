@@ -2,8 +2,8 @@
 
 import pytest
 
-from agent_safety.envelope import CapabilityEnvelope, EnvelopeSigner, EnvelopeVerifier
-from agent_safety.exceptions import PermissionDenied
+from agent_safety.core.exceptions import PermissionDenied
+from agent_safety.distributed.envelope import CapabilityEnvelope, EnvelopeSigner, EnvelopeVerifier
 
 
 def test_envelope_sign_and_verify():

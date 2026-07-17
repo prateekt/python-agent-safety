@@ -1,6 +1,6 @@
 """One safety policy, three providers.
 
-Shows that the *same* guarded tools and the *same* ``safety_context`` drive a
+Shows that the *same* guarded tools and the *same* ``safely`` block drive a
 Claude, OpenAI, or Gemini tool-calling loop unchanged — only the schema dialect
 and the parsing of the model's tool call differ, and ``ToolRegistry`` absorbs
 both. No network calls here; we simulate each provider's tool-call shape.
@@ -8,14 +8,8 @@ both. No network calls here; we simulate each provider's tool-call shape.
     python examples/providers.py
 """
 
-from agent_safety import (
-    ListSink,
-    PermissionSet,
-    Quota,
-    RedactPII,
-    ToolRegistry,
-    safety_context,
-)
+from agent_safety import ToolRegistry, safely
+from agent_safety.core import ListSink
 
 registry = ToolRegistry()
 
@@ -50,11 +44,11 @@ def main() -> None:
 
     audit = ListSink()
     print("\n== dispatch under one safety policy ==")
-    with safety_context(
-        PermissionSet.of("weather.read"),
-        output_guards=[RedactPII()],     # scrub the leaked email for every provider
-        quota=Quota(max_calls=10),
-        audit=[audit],
+    with safely(
+        allow="weather.read",
+        hide_secrets=True,               # scrub the leaked email for every provider
+        calls=10,
+        log=audit,
     ):
         for dialect, (call_id, name, args) in calls.items():
             msg = registry.safe_dispatch(dialect, call_id, name, args)

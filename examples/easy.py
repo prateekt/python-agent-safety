@@ -6,8 +6,8 @@ Two ideas: mark a function with @tool, then run it inside a safely(...) block th
 says what's allowed. That's it.
 """
 
-from agent_safety import safely, tool
-from agent_safety.exceptions import ExplanationRequired, PermissionDenied
+from agent_safety import PermissionDenied, safely, tool
+from agent_safety.core.exceptions import ExplanationRequired
 
 
 @tool

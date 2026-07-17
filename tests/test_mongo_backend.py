@@ -8,10 +8,10 @@ from typing import Any, Dict
 
 import pytest
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.backends.mongo_backend import MongoBudgetBackend, mongo_backend
-from agent_safety.exceptions import LoopDetected, QuotaExceeded, RateLimitExceeded
-from agent_safety.nonces import MongoNonceStore
+from agent_safety.core.exceptions import LoopDetected, QuotaExceeded, RateLimitExceeded
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
+from agent_safety.distributed.backends.mongo_backend import MongoBudgetBackend, mongo_backend
+from agent_safety.distributed.nonces import MongoNonceStore
 
 
 class _FakeColl:

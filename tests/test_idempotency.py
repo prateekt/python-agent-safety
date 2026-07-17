@@ -1,8 +1,8 @@
 """Idempotency tests for distributed charging."""
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway
-from agent_safety.policy_spec import PolicySpec
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway
+from agent_safety.distributed.policy_spec import PolicySpec
 
 
 def test_gateway_mint_idempotent_request_id():

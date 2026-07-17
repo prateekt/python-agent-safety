@@ -8,11 +8,11 @@ import json
 import pytest
 
 from agent_safety import safely, tool
-from agent_safety.backends import MemoryBackend
-from agent_safety.envelope import EnvelopeSigner
-from agent_safety.exceptions import PermissionDenied, QuotaExceeded
-from agent_safety.policy_spec import PolicySpec
-from agent_safety.run import RunContext
+from agent_safety.core.exceptions import PermissionDenied, QuotaExceeded
+from agent_safety.distributed.backends import MemoryBackend
+from agent_safety.distributed.envelope import EnvelopeSigner
+from agent_safety.distributed.policy_spec import PolicySpec
+from agent_safety.distributed.run import RunContext
 
 
 @tool
@@ -99,7 +99,7 @@ def test_canary_requires_for_bucketed_task(monkeypatch):
 
 
 def test_load_signing_keys_from_env_json(monkeypatch, tmp_path):
-    from agent_safety.distributed import load_signing_keys
+    from agent_safety.distributed.config import load_signing_keys
 
     secret = base64.b64encode(b"file-secret-32-bytes-long!!!!!!").decode()
     path = tmp_path / "keys.json"

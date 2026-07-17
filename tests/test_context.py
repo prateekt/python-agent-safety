@@ -1,16 +1,16 @@
 import pytest
 
-from agent_safety import (
-    MaxLength,
-    PermissionDenied,
-    PermissionSet,
+from agent_safety import PermissionDenied
+from agent_safety.core.context import (
     check_input,
     current_policy,
     is_allowed,
     require,
     safety_context,
 )
-from agent_safety.exceptions import GuardViolation
+from agent_safety.core.exceptions import GuardViolation
+from agent_safety.core.guards import MaxLength
+from agent_safety.core.permissions import PermissionSet
 
 
 def test_default_is_deny_all():

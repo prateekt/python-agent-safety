@@ -10,6 +10,10 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+
+# Unrelated to the library — keep out of clones and agent context
+agent-safety-patent/
 
 # OS / IDE
 .DS_Store

@@ -2,26 +2,21 @@ import asyncio
 
 import pytest
 
-from agent_safety import (
-    ExplanationRequired,
-    ListSink,
-    PermissionSet,
-    ReasoningGate,
-    current_trace,
-    guarded_async_tool,
-    guarded_tool,
-    record_thought,
-    safety_context,
-    thought_trace,
-)
+from agent_safety import tool
+from agent_safety.core.audit import ListSink
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import ExplanationRequired
+from agent_safety.core.gates import ReasoningGate
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.core.reasoning import current_trace, record_thought, thought_trace
 
 
-@guarded_tool("shell.exec")
+@tool("shell.exec")
 def run_shell(cmd: str) -> str:
     return f"$ {cmd}"
 
 
-@guarded_tool("data.read")
+@tool("data.read")
 def read_data(key: str) -> str:
     return f"value:{key}"
 
@@ -79,7 +74,7 @@ def test_reasoning_is_audited():
 
 
 def test_async_tool_requires_rationale():
-    @guarded_async_tool("net.fetch")
+    @tool("net.fetch")
     async def fetch(url: str) -> str:
         await asyncio.sleep(0)
         return url

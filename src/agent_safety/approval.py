@@ -1,67 +1,28 @@
-"""Human-in-the-loop approval for high-risk tool calls.
+"""Human-in-the-loop approval — see :mod:`agent_safety.gates`.
 
-Least privilege says *what* an agent may do; an approval gate adds *who says so,
-right now*. An :class:`ApprovalGate` names a set of sensitive capabilities and a
-callable that must say "yes" before any matching tool actually runs — a CLI
-prompt, a Slack round-trip, a policy service, anything.
-
-It composes with everything else: the gate is consulted **after** the permission
-check and quota charge but **before** the tool executes, every decision is
-audited, and a denial raises :class:`~agent_safety.exceptions.ApprovalDenied`,
-which :meth:`ToolRegistry.safe_dispatch` turns into an error result handed back
-to the model instead of crashing the loop.
-
-The approver may be **sync or async**. A synchronous approver works with both
-``@guarded_tool`` and ``@guarded_async_tool``; an async approver (a coroutine
-function) may only be used under ``@guarded_async_tool`` — calling it from a
-sync tool raises ``RuntimeError`` rather than silently skipping approval.
-
-    def cli_prompt(req: ApprovalRequest) -> bool:
-        return input(f"Allow {req.tool}{req.args}? [y/N] ").lower() == "y"
-
-    with safety_context(
-        PermissionSet.of("shell.exec", "filesystem.*"),
-        approval=ApprovalGate(require=["shell.exec", "filesystem.delete"],
-                              approver=cli_prompt),
-    ):
-        run_shell("ls")        # shell.exec -> prompts for a human yes/no
+This module re-exports :class:`~agent_safety.gates.ApprovalGate` from the
+unified gates module, where all four gate kinds now live. Every approval hook
+receives an :class:`~agent_safety.action.Action`.
 """
 
 from __future__ import annotations
 
-import inspect
-from fnmatch import fnmatchcase
-from typing import Awaitable, Callable, Iterable, Union
+import warnings
+from typing import Any
 
-from .action import Action
+from .core.action import Action
+from .core.gates import ApprovalGate, Approver
 
-# An approver returns truthy to allow, falsy to deny — sync or via a coroutine.
-Approver = Callable[[Action], Union[bool, Awaitable[bool]]]
-
-# Back-compat: an approver's argument used to be called ApprovalRequest.
-ApprovalRequest = Action
+__all__ = ["ApprovalGate", "Approver"]
 
 
-class ApprovalGate:
-    """Require explicit approval before any tool whose capability it covers runs.
-
-    Args:
-        require: Capability patterns (glob ``*`` wildcards, like
-            :class:`~agent_safety.permissions.PermissionSet`) that need approval.
-        approver: Callable taking an :class:`ApprovalRequest` and returning a
-            truthy/falsy decision; may be a coroutine function.
-        reason: Optional human-readable note attached to each request.
-    """
-
-    def __init__(self, require: Iterable[str], approver: Approver, *, reason: str = ""):
-        self.patterns = tuple(p.strip() for p in require if p and p.strip())
-        if not self.patterns:
-            raise ValueError("an ApprovalGate must require at least one capability")
-        self.approver = approver
-        self.reason = reason
-        self.is_async = inspect.iscoroutinefunction(approver)
-        self.name = "approval_gate(" + ", ".join(self.patterns) + ")"
-
-    def covers(self, capability: str) -> bool:
-        """Whether this gate requires approval for *capability*."""
-        return any(fnmatchcase(capability, p) for p in self.patterns)
+def __getattr__(name: str) -> Any:
+    if name == "ApprovalRequest":
+        warnings.warn(
+            "ApprovalRequest is a deprecated alias of Action; "
+            "import Action from agent_safety instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return Action
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -2,12 +2,12 @@
 
 import pytest
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.envelope import EnvelopeVerifier
-from agent_safety.exceptions import LoopDetected
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway
-from agent_safety.policy_spec import PolicySpec
-from agent_safety.run import RunContext
+from agent_safety.core.exceptions import LoopDetected
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
+from agent_safety.distributed.envelope import EnvelopeVerifier
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway
+from agent_safety.distributed.policy_spec import PolicySpec
+from agent_safety.distributed.run import RunContext
 
 
 def test_gateway_mint_and_worker_verify():
@@ -29,7 +29,7 @@ def test_gateway_mint_and_worker_verify():
     assert resp.envelope is not None
 
     verifier = EnvelopeVerifier({"default": secret})
-    from agent_safety.envelope import CapabilityEnvelope
+    from agent_safety.distributed.envelope import CapabilityEnvelope
     env = CapabilityEnvelope.from_dict(resp.envelope)
     verifier.verify(env)
 

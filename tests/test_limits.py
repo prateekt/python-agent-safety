@@ -1,14 +1,10 @@
 import pytest
 
-from agent_safety import (
-    LoopDetected,
-    LoopGuard,
-    PermissionSet,
-    RateLimit,
-    RateLimitExceeded,
-    guarded_tool,
-    safety_context,
-)
+from agent_safety import tool
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import LoopDetected, RateLimitExceeded
+from agent_safety.core.limits import LoopGuard, RateLimit
+from agent_safety.core.permissions import PermissionSet
 
 # -- RateLimit (deterministic via the `now=` hook) ------------------------
 
@@ -60,7 +56,7 @@ def test_rate_limit_requires_spec():
         RateLimit()
 
 
-@guarded_tool("x.do")
+@tool("x.do")
 def do_thing():
     return "done"
 
@@ -101,7 +97,7 @@ def test_loop_guard_validates_args():
         LoopGuard(max_identical=5, history=5)
 
 
-@guarded_tool("y.do")
+@tool("y.do")
 def do_with(value):
     return value
 
@@ -117,7 +113,7 @@ def test_loop_guard_in_context():
 
 
 def test_rate_limit_and_loop_audited():
-    from agent_safety import ListSink
+    from agent_safety.core.audit import ListSink
 
     audit = ListSink()
     with safety_context(

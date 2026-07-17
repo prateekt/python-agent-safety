@@ -18,24 +18,23 @@ from dataclasses import dataclass
 from typing import Callable, List, Tuple
 
 from agent_safety import (
-    ConstitutionViolation,
-    PermissionSet,
     Profiles,
     ToolRegistry,
-    guard,
-    is_allowed,
+    guard_tools,
     safely,
-    safety_context,
     tool,
 )
-from agent_safety.exceptions import (
+from agent_safety.core.context import is_allowed, safety_context
+from agent_safety.core.exceptions import (
     AgentSafetyError,
+    ConstitutionViolation,
     GuardViolation,
     HoneytokenTripped,
     LoopDetected,
     PermissionDenied,
     QuotaExceeded,
 )
+from agent_safety.core.permissions import PermissionSet
 
 # A scenario returns (handled_correctly, detail).
 Scenario = Callable[[], Tuple[bool, str]]
@@ -109,9 +108,9 @@ def secret_in_output() -> Tuple[bool, str]:
 
 @scenario("SSRF to the cloud metadata endpoint", "LLM02 Sensitive Info Disclosure")
 def ssrf_metadata() -> Tuple[bool, str]:
-    from agent_safety import NetworkAllowlist, guarded_tool
+    from agent_safety.core.sandbox import NetworkAllowlist
 
-    @guarded_tool("net.http", input_guards=[NetworkAllowlist(["api.weather.com"],
+    @tool("net.http", input_guards=[NetworkAllowlist(["api.weather.com"],
                                                              schemes=["http", "https"])])
     def fetch(url):
         return f"fetched {url}"
@@ -123,9 +122,9 @@ def ssrf_metadata() -> Tuple[bool, str]:
 
 @scenario("Path traversal out of the sandbox", "LLM02 Sensitive Info Disclosure")
 def path_traversal() -> Tuple[bool, str]:
-    from agent_safety import PathBoundary, guarded_tool
+    from agent_safety.core.sandbox import PathBoundary
 
-    @guarded_tool("files.read", input_guards=[PathBoundary("/srv/data")])
+    @tool("files.read", input_guards=[PathBoundary("/srv/data")])
     def read_file(path):
         return f"read {path}"
 
@@ -234,16 +233,16 @@ def legit_read() -> Tuple[bool, str]:
     def read_notes(_):
         return "ok"
 
-    safe = guard(read_notes)
+    safe = guard_tools(read_notes)
     with safely(allow="read_notes"):
         return (safe("notes") == "ok"), "read returned normally"
 
 
 @scenario("Legitimate call to an allow-listed host", "control", kind="legit")
 def legit_api_call() -> Tuple[bool, str]:
-    from agent_safety import NetworkAllowlist, guarded_tool
+    from agent_safety.core.sandbox import NetworkAllowlist
 
-    @guarded_tool("net.http", input_guards=[NetworkAllowlist(["api.weather.com"])])
+    @tool("net.http", input_guards=[NetworkAllowlist(["api.weather.com"])])
     def fetch(url):
         return "ok"
 

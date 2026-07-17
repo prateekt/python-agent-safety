@@ -6,9 +6,9 @@ import statistics
 import time
 import uuid
 
-from agent_safety.backends import MemoryBackend
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway
-from agent_safety.policy_spec import PolicySpec
+from agent_safety.distributed.backends import MemoryBackend
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway
+from agent_safety.distributed.policy_spec import PolicySpec
 
 
 def main() -> None:

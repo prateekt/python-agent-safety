@@ -1,46 +1,43 @@
-"""End-to-end walkthrough of the v0.3 hardening layers.
+"""End-to-end walkthrough of the hardening layers.
 
     python examples/hardening.py
 
-Shows the constructs added on top of permissions/guards/quota:
+Everything here is the easy API — plain ``safely`` keywords — plus two sandbox
+guards from ``agent_safety.core`` attached per-tool:
 
-* PathBoundary    — keep a filesystem tool inside its sandbox
-* NetworkAllowlist — keep a network tool off private/SSRF targets
-* RateLimit + LoopGuard — bound how fast / how repetitively the agent acts
-* ApprovalGate    — require a human "yes" before a sensitive call
-* rollback()      — undo irreversible actions when a later step fails
+* PathBoundary       — keep a filesystem tool inside its sandbox
+* NetworkAllowlist   — keep a network tool off private/SSRF targets
+* per_second= / no_repeats= — bound how fast / how repetitively the agent acts
+* ask=               — require a "yes" before a sensitive call
+* explain=           — require the agent to justify itself
+* rollback()         — undo irreversible actions when a later step fails
 
 Everything below runs offline with no API keys.
 """
 
-from agent_safety import (
-    ApprovalDenied,
-    ApprovalGate,
-    ExplanationRequired,
-    LoopDetected,
-    LoopGuard,
+from agent_safety import ApprovalDenied, safely, tool
+from agent_safety.core import (
     NetworkAllowlist,
     PathBoundary,
-    PermissionSet,
-    RateLimit,
-    RateLimitExceeded,
-    ReasoningGate,
-    guarded_tool,
     record_thought,
     rollback,
-    safety_context,
     thought_trace,
     trace_span,
 )
-from agent_safety.exceptions import GuardViolation
+from agent_safety.core.exceptions import (
+    ExplanationRequired,
+    GuardViolation,
+    LoopDetected,
+    RateLimitExceeded,
+)
 
 
-@guarded_tool("filesystem.read", input_guards=[PathBoundary("/srv/data")])
+@tool("filesystem.read", input_guards=[PathBoundary("/srv/data")])
 def read_file(path: str) -> str:
     return f"<contents of {path}>"
 
 
-@guarded_tool(
+@tool(
     "network.http",
     # Allow http too, so the metadata URL below is caught by the SSRF/private-IP
     # check rather than the (https-only) scheme check — that's the point of the demo.
@@ -50,19 +47,19 @@ def http_get(url: str) -> str:
     return f"<response from {url}>"
 
 
-@guarded_tool("search.run")
+@tool("search.run")
 def search(query: str) -> str:
     return f"results for {query!r}"
 
 
-@guarded_tool("shell.exec")
+@tool("shell.exec")
 def run_shell(cmd: str) -> str:
     return f"$ {cmd}\n(ok)"
 
 
 def main() -> None:
     print("== 1. PathBoundary confines a filesystem tool ==")
-    with safety_context(PermissionSet.of("filesystem.read")):
+    with safely(allow="filesystem.read"):
         print("inside sandbox: ", read_file("reports/q3.txt"))
         try:
             read_file("../../etc/passwd")
@@ -70,7 +67,7 @@ def main() -> None:
             print("traversal blocked:", e)
 
     print("\n== 2. NetworkAllowlist blocks SSRF / off-list hosts ==")
-    with safety_context(PermissionSet.of("network.http")):
+    with safely(allow="network.http"):
         print("allowed host:   ", http_get("https://api.weather.com/forecast"))
         for bad in ("https://evil.example/x", "http://169.254.169.254/latest/meta-data"):
             try:
@@ -78,8 +75,8 @@ def main() -> None:
             except GuardViolation as e:
                 print("blocked:        ", e)
 
-    print("\n== 3. RateLimit caps bursts ==")
-    with safety_context(PermissionSet.of("search.run"), rate_limit=RateLimit(per_second=2)):
+    print("\n== 3. per_second= caps bursts ==")
+    with safely(allow="search.run", per_second=2):
         print("call 1:", search("a"))
         print("call 2:", search("b"))
         try:
@@ -87,8 +84,8 @@ def main() -> None:
         except RateLimitExceeded as e:
             print("call 3 blocked:", e)
 
-    print("\n== 4. LoopGuard breaks a stuck agent ==")
-    with safety_context(PermissionSet.of("search.run"), loop_guard=LoopGuard(max_identical=2)):
+    print("\n== 4. no_repeats= breaks a stuck agent ==")
+    with safely(allow="search.run", no_repeats=2):
         for i in range(4):
             try:
                 search("same query")  # identical args every time
@@ -97,26 +94,22 @@ def main() -> None:
                 print(f"call {i + 1} blocked:", e)
                 break
 
-    print("\n== 5. ApprovalGate requires a human yes ==")
+    print("\n== 5. ask= requires a yes before acting ==")
     # A scripted approver: approve reads, reject shell.
-    def approver(req) -> bool:
-        decision = req.capability != "shell.exec"
-        print(f"   [approver] {req.tool}{req.args} -> {'approve' if decision else 'reject'}")
+    def approver(action) -> bool:
+        decision = action.capability != "shell.exec"
+        print(f"   [approver] {action.tool}{action.args} -> {'approve' if decision else 'reject'}")
         return decision
 
-    gate = ApprovalGate(require=["shell.exec", "filesystem.read"], approver=approver)
-    with safety_context(
-        PermissionSet.of("shell.exec", "filesystem.read"), approval=gate
-    ):
+    with safely(allow=["shell.exec", "filesystem.read"], ask=approver):
         print("approved read:  ", read_file("reports/q3.txt"))
         try:
             run_shell("rm -rf /")
         except ApprovalDenied as e:
             print("rejected shell: ", e)
 
-    print("\n== 6. ReasoningGate requires the agent to justify itself ==")
-    gate = ReasoningGate(require=["shell.exec"], min_length=15)
-    with safety_context(PermissionSet.of("shell.exec"), reasoning=gate):
+    print("\n== 6. explain= requires the agent to justify itself ==")
+    with safely(allow="shell.exec", explain="shell.exec"):
         with thought_trace() as trace, trace_span("cleanup"):
             record_thought("the build dir has stale artifacts; I'll clear them")
             print("with rationale:", run_shell(

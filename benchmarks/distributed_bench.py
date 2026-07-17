@@ -5,10 +5,10 @@ from __future__ import annotations
 import statistics
 import time
 
-from agent_safety.backends import MemoryBackend
-from agent_safety.envelope import EnvelopeVerifier
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway
-from agent_safety.policy_spec import PolicySpec
+from agent_safety.distributed.backends import MemoryBackend
+from agent_safety.distributed.envelope import EnvelopeVerifier
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway
+from agent_safety.distributed.policy_spec import PolicySpec
 
 
 def _p99(samples: list) -> float:
@@ -29,7 +29,7 @@ def bench_envelope_verify(n: int = 1000) -> None:
         "capability": "x",
         "policy_spec": spec.to_dict(),
     })
-    from agent_safety.envelope import CapabilityEnvelope
+    from agent_safety.distributed.envelope import CapabilityEnvelope
     env = CapabilityEnvelope.from_dict(resp.envelope)
     verifier = EnvelopeVerifier({"default": secret})
 
@@ -42,7 +42,7 @@ def bench_envelope_verify(n: int = 1000) -> None:
 
 
 def bench_memory_charge(n: int = 1000) -> None:
-    from agent_safety.backends import BudgetCharge, BudgetLimits
+    from agent_safety.distributed.backends import BudgetCharge, BudgetLimits
     backend = MemoryBackend()
     limits = BudgetLimits(max_calls=n + 1)
     samples = []

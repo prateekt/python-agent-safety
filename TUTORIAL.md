@@ -92,7 +92,7 @@ into trying something, it can only do what you listed.
 with safely(
     allow="get_weather",
     calls=10,             # at most 10 tool calls
-    seconds=30,           # at most 30 seconds of work
+    total_seconds=30,     # at most 30 seconds of work
     hide_secrets=True,    # scrub emails / API keys out of results
     explain=True,         # the agent must say WHY before each call
     log=True,             # print every decision so you can watch
@@ -185,7 +185,8 @@ The same code works for OpenAI and Gemini — just change `"anthropic"` to
 | `calls=` | most tool calls |
 | `tokens=` | most model tokens (you report them) |
 | `per_second=` / `per_minute=` | speed limit |
-| `seconds=` | time budget |
+| `total_seconds=` | time budget for the whole block |
+| `timeout=` | no single call may hang past N seconds |
 | `hide_secrets=True` | scrub emails / API keys / tokens from results |
 | `max_input=` | reject inputs longer than N characters |
 | `block=` | reject text matching a pattern (e.g. `"rm -rf"`) |
@@ -202,10 +203,10 @@ All optional. Start with `allow=` and add more as you need them.
 
 ## Where to go next
 
-- Run the examples: [`examples/easy.py`](examples/easy.py) and
-  [`examples/first_agent.py`](examples/first_agent.py).
+- Run the examples in order: [`examples/README.md`](examples/README.md).
+- Look up any keyword: [`docs/GUIDE.md`](docs/GUIDE.md).
 - Outgrowing the keywords? Every one maps to a real object you can use directly —
-  see "The full version" in the [README](README.md).
+  see [`docs/ADVANCED.md`](docs/ADVANCED.md).
 - The honest part: these are strong defaults, not a magic shield. The durable
   guarantee is least privilege — the agent simply cannot do what you didn't
   `allow`. Layer real sandboxing/moderation behind it for production.

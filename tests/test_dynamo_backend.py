@@ -9,10 +9,10 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.backends.dynamo_backend import DynamoBudgetBackend, dynamo_backend
-from agent_safety.exceptions import LoopDetected, QuotaExceeded
-from agent_safety.nonces import DynamoNonceStore
+from agent_safety.core.exceptions import LoopDetected, QuotaExceeded
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
+from agent_safety.distributed.backends.dynamo_backend import DynamoBudgetBackend, dynamo_backend
+from agent_safety.distributed.nonces import DynamoNonceStore
 
 
 class ConditionalCheckFailedException(Exception):

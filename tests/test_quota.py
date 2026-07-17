@@ -1,13 +1,9 @@
 import pytest
 
-from agent_safety import (
-    PermissionSet,
-    Quota,
-    QuotaExceeded,
-    charge_tokens,
-    guarded_tool,
-    safety_context,
-)
+from agent_safety import QuotaExceeded, tool
+from agent_safety.core.context import charge_tokens, safety_context
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.core.quota import Quota
 
 
 def test_quota_charges_calls():
@@ -42,7 +38,7 @@ def test_quota_none_is_unlimited():
     assert q.remaining_calls() is None
 
 
-@guarded_tool("x.do")
+@tool("x.do")
 def do_thing():
     return "done"
 

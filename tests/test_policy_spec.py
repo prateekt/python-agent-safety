@@ -1,6 +1,6 @@
 """Tests for PolicySpec and PolicyRegistry."""
 
-from agent_safety.policy_spec import PolicyRegistry, PolicySpec
+from agent_safety.distributed.policy_spec import PolicyRegistry, PolicySpec
 
 
 def test_policy_spec_hash_stable():

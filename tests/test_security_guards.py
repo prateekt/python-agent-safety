@@ -1,7 +1,7 @@
 import pytest
 
-from agent_safety import SecretScanner, Stage, UnicodeSanitizer
-from agent_safety.exceptions import GuardViolation
+from agent_safety.core.exceptions import GuardViolation
+from agent_safety.core.guards import SecretScanner, Stage, UnicodeSanitizer
 
 # -- SecretScanner --------------------------------------------------------
 

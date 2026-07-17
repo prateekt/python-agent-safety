@@ -16,7 +16,9 @@ import os
 
 import pytest
 
-from agent_safety import PermissionSet, ToolRegistry, safety_context
+from agent_safety import ToolRegistry
+from agent_safety.core.context import safety_context
+from agent_safety.core.permissions import PermissionSet
 
 openai = pytest.importorskip("openai", reason="openai SDK not installed")
 

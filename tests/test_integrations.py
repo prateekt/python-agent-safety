@@ -2,8 +2,10 @@ import json
 
 import pytest
 
-from agent_safety import PermissionSet, ToolRegistry, safely, safety_context
-from agent_safety.exceptions import PermissionDenied
+from agent_safety import ToolRegistry, safely
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import PermissionDenied
+from agent_safety.core.permissions import PermissionSet
 
 
 def build_registry():

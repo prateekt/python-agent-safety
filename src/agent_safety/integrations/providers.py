@@ -32,16 +32,17 @@ provider's response already gave you, and format the result back with
 
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
-from .context import in_context, is_allowed
-from .decorators import guarded_tool
-from .exceptions import AgentSafetyError
-from .guards import Guard
-from .schema import tool_description, tool_schema
-from .validation import validate_args
+from ..core.context import in_context, is_allowed
+from ..core.exceptions import AgentSafetyError
+from ..core.guards import Guard
+from ..core.pipeline import make_tool_wrapper
+from ..core.schema import tool_description, tool_schema
+from ..core.validation import validate_args
 
 DIALECTS = ("anthropic", "openai", "gemini")
 
@@ -162,24 +163,27 @@ class ToolRegistry:
         input_guards: Iterable[Guard] = (),
         output_guards: Iterable[Guard] = (),
         validate: bool = False,
-        idempotent: bool = False,
+        cache: bool = False,
+        idempotent: bool = False,  # back-compat alias of cache
     ) -> Callable[[Callable[..., object]], Callable[..., object]]:
         """Decorator: register a function as a guarded, schema-carrying tool.
 
-        When ``parameters`` or ``description`` are omitted they are inferred from
-        the function's signature and docstring (see :mod:`agent_safety.schema`);
-        an explicit value always wins. Pass ``validate=True`` to check each call's
-        arguments against the schema before dispatch, or ``idempotent=True`` to
-        cache the result of identical calls to a pure tool.
+        Same wrapping as ``@tool`` (sync and ``async def`` both work), plus a
+        JSON schema for the model. When ``parameters`` or ``description`` are
+        omitted they are inferred from the function's signature and docstring
+        (see :mod:`agent_safety.schema`); an explicit value always wins. Pass
+        ``validate=True`` to check each call's arguments against the schema
+        before dispatch, or ``cache=True`` to reuse the result of identical
+        calls to a pure tool.
         """
 
         def decorator(func: Callable[..., object]) -> Callable[..., object]:
             params = parameters if parameters is not None else tool_schema(func)
             desc = tool_description(func, description)
-            guarded = guarded_tool(
-                capability, input_guards=input_guards,
-                output_guards=output_guards, idempotent=idempotent,
-            )(func)
+            guarded = make_tool_wrapper(
+                func, capability, input_guards=input_guards,
+                output_guards=output_guards, cache=cache or idempotent,
+            )
             tool_name = name or func.__name__
             self._tools[tool_name] = ToolSpec(
                 tool_name, capability, desc, params, guarded, validate
@@ -223,6 +227,22 @@ class ToolRegistry:
         :class:`KeyError` for an unknown tool and
         :class:`~agent_safety.exceptions.AgentSafetyError` if safety blocks it.
         """
+        spec, arguments = self._prepare(name, arguments)
+        if inspect.iscoroutinefunction(spec.func):
+            raise TypeError(
+                f"tool {name!r} is async; use `await registry.adispatch(...)`"
+            )
+        return spec.func(**arguments)
+
+    async def adispatch(self, name: str, arguments: Any) -> object:
+        """Async counterpart of :meth:`dispatch`; works for sync and async tools."""
+        spec, arguments = self._prepare(name, arguments)
+        result = spec.func(**arguments)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    def _prepare(self, name: str, arguments: Any) -> "tuple[ToolSpec, Dict[str, Any]]":
         if name not in self._tools:
             raise KeyError(f"no registered tool named {name!r}")
         if isinstance(arguments, str):
@@ -232,7 +252,7 @@ class ToolRegistry:
         spec = self._tools[name]
         if spec.validate:
             validate_args(spec.parameters, arguments)  # raises GuardViolation if invalid
-        return spec.func(**arguments)
+        return spec, dict(arguments)
 
     # -- result formatting --------------------------------------------------
     def tool_result(
@@ -270,6 +290,16 @@ class ToolRegistry:
         """
         try:
             result = self.dispatch(name, arguments)
+            return self.tool_result(dialect, call_id, name, result)
+        except (AgentSafetyError, KeyError, TypeError, ValueError) as exc:
+            return self.tool_result(dialect, call_id, name, str(exc), is_error=True)
+
+    async def asafe_dispatch(
+        self, dialect: str, call_id: str, name: str, arguments: Any
+    ) -> Dict[str, Any]:
+        """Async counterpart of :meth:`safe_dispatch`; works for sync and async tools."""
+        try:
+            result = await self.adispatch(name, arguments)
             return self.tool_result(dialect, call_id, name, result)
         except (AgentSafetyError, KeyError, TypeError, ValueError) as exc:
             return self.tool_result(dialect, call_id, name, str(exc), is_error=True)

@@ -12,8 +12,7 @@ identical).
 
 import asyncio
 
-from agent_safety import guard_mcp, safely
-from agent_safety.exceptions import PermissionDenied, QuotaExceeded
+from agent_safety import PermissionDenied, QuotaExceeded, guard_mcp, safely
 
 
 class FakeMCPSession:

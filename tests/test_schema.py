@@ -1,14 +1,10 @@
 import enum
 from typing import Annotated, Dict, List, Literal, Optional
 
-from agent_safety import (
-    Param,
-    PermissionSet,
-    ToolRegistry,
-    safety_context,
-    tool_description,
-    tool_schema,
-)
+from agent_safety import ToolRegistry
+from agent_safety.core.context import safety_context
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.core.schema import Param, tool_description, tool_schema
 
 
 def test_primitives_and_required():

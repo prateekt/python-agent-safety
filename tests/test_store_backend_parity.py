@@ -15,12 +15,12 @@ from typing import Any, Dict, Optional
 import pytest
 
 from agent_safety import safely, tool
-from agent_safety.backends import MemoryBackend
-from agent_safety.backends.dynamo_backend import DynamoBudgetBackend
-from agent_safety.backends.mongo_backend import MongoBudgetBackend
-from agent_safety.backends.sql_backend import SqlBudgetBackend
-from agent_safety.exceptions import QuotaExceeded
-from agent_safety.run import RunContext
+from agent_safety.core.exceptions import QuotaExceeded
+from agent_safety.distributed.backends import MemoryBackend
+from agent_safety.distributed.backends.dynamo_backend import DynamoBudgetBackend
+from agent_safety.distributed.backends.mongo_backend import MongoBudgetBackend
+from agent_safety.distributed.backends.sql_backend import SqlBudgetBackend
+from agent_safety.distributed.run import RunContext
 
 
 @tool

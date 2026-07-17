@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.backends.sql_backend import SqlBudgetBackend, sql_backend
-from agent_safety.exceptions import (
+from agent_safety.core.exceptions import (
     LoopDetected,
     QuotaExceeded,
     RateLimitExceeded,
     RiskBudgetExceeded,
 )
-from agent_safety.nonces import SqlNonceStore
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
+from agent_safety.distributed.backends.sql_backend import SqlBudgetBackend, sql_backend
+from agent_safety.distributed.nonces import SqlNonceStore
 
 
 def _connect_factory(path: Path):

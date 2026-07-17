@@ -1,0 +1,35 @@
+# agent_safety
+
+> Zero-dependency Python library for least-privilege runtime control of AI
+> agents: mark functions with @tool, scope what's allowed with safely(...).
+> An agent can only invoke the capabilities you granted, on the budgets you
+> set; nested scopes only tighten. Works with Claude, OpenAI, Gemini, and MCP.
+
+Golden path:
+
+    from agent_safety import tool, safely
+
+    @tool
+    def read_file(path): ...
+
+    with safely(allow="read_file", calls=10, hide_secrets=True):
+        read_file("notes.txt")
+
+## Docs
+
+- [README](README.md): pitch, install, the two core ideas, keyword cheat sheet
+- [AGENTS.md](AGENTS.md): public surface, error-code table, repo rules — read this first if you are an AI agent
+- [TUTORIAL.md](TUTORIAL.md): a complete safe agent in 10 minutes, offline
+- [docs/GUIDE.md](docs/GUIDE.md): every safely(...) keyword, with examples
+- [docs/PIPELINE.md](docs/PIPELINE.md): the ordered 14-step enforcement checklist every tool call goes through
+- [docs/ADVANCED.md](docs/ADVANCED.md): the core objects (PermissionSet, guards, gates, rollback, audit)
+- [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md): envelopes, shared budgets, the policy gateway
+- [docs/MIGRATION.md](docs/MIGRATION.md): old name -> new name for the 0.9 restructure
+- [schemas/policy_spec.schema.json](schemas/policy_spec.schema.json): JSON schema for serializable policies (PolicySpec)
+
+## Optional
+
+- [THREAT_MODEL.md](THREAT_MODEL.md): honest scope, trust boundaries, OWASP LLM Top 10 mapping
+- [OPERATIONS.md](OPERATIONS.md): production deployment of the distributed gateway
+- [examples/README.md](examples/README.md): runnable examples in learning order
+- [CONTRIBUTING.md](CONTRIBUTING.md): repo principles and how to add guards/gates/dialects

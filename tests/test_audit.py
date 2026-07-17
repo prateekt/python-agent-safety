@@ -1,17 +1,13 @@
 import pytest
 
-from agent_safety import (
-    ListSink,
-    PermissionDenied,
-    PermissionSet,
-    RedactPII,
-    guarded_tool,
-    require,
-    safety_context,
-)
+from agent_safety import PermissionDenied, tool
+from agent_safety.core.audit import ListSink
+from agent_safety.core.context import require, safety_context
+from agent_safety.core.guards import RedactPII
+from agent_safety.core.permissions import PermissionSet
 
 
-@guarded_tool("net.fetch")
+@tool("net.fetch")
 def fetch():
     return "token sk_live_ABCDEF0123456789ABCD"
 

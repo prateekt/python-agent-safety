@@ -5,9 +5,9 @@ from __future__ import annotations
 import uuid
 
 from agent_safety import safely, tool
-from agent_safety.envelope import EnvelopeSigner, EnvelopeVerifier
-from agent_safety.policy_spec import PolicySpec
-from agent_safety.run import RunContext
+from agent_safety.distributed.envelope import EnvelopeSigner, EnvelopeVerifier
+from agent_safety.distributed.policy_spec import PolicySpec
+from agent_safety.distributed.run import RunContext
 
 
 @tool

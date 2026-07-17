@@ -1,4 +1,4 @@
-from agent_safety import PermissionSet
+from agent_safety.core.permissions import PermissionSet
 
 
 def test_default_deny():

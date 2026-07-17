@@ -2,26 +2,19 @@ import asyncio
 
 import pytest
 
-from agent_safety import (
-    ApprovalDenied,
-    ApprovalGate,
-    ApprovalRequest,
-    ListSink,
-    PermissionDenied,
-    PermissionSet,
-    ToolRegistry,
-    guarded_async_tool,
-    guarded_tool,
-    safety_context,
-)
+from agent_safety import Action, ApprovalDenied, PermissionDenied, ToolRegistry, tool
+from agent_safety.core.audit import ListSink
+from agent_safety.core.context import safety_context
+from agent_safety.core.gates import ApprovalGate
+from agent_safety.core.permissions import PermissionSet
 
 
-@guarded_tool("shell.exec")
+@tool("shell.exec")
 def run_shell(cmd: str) -> str:
     return f"$ {cmd}"
 
 
-@guarded_tool("filesystem.read")
+@tool("filesystem.read")
 def read_file(path: str) -> str:
     return f"contents of {path}"
 
@@ -56,7 +49,7 @@ def test_approval_only_gates_listed_capabilities():
 def test_approval_request_carries_args():
     seen = {}
 
-    def approver(req: ApprovalRequest) -> bool:
+    def approver(req: Action) -> bool:
         seen["req"] = req
         return True
 
@@ -103,7 +96,7 @@ def test_approval_denied_via_safe_dispatch_returns_error():
 
 # -- async approvers ------------------------------------------------------
 
-@guarded_async_tool("net.fetch")
+@tool("net.fetch")
 async def fetch(url: str) -> str:
     await asyncio.sleep(0)
     return f"got {url}"

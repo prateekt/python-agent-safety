@@ -2,13 +2,10 @@ import json
 
 import pytest
 
-from agent_safety import (
-    PermissionSet,
-    ToolCall,
-    ToolRegistry,
-    parse_tool_calls,
-    safety_context,
-)
+from agent_safety import ToolRegistry, parse_tool_calls
+from agent_safety.core.context import safety_context
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.integrations.providers import ToolCall
 
 # -- PermissionSet (de)serialization --------------------------------------
 

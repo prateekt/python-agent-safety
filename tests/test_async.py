@@ -2,18 +2,14 @@ import asyncio
 
 import pytest
 
-from agent_safety import (
-    MaxLength,
-    PermissionDenied,
-    PermissionSet,
-    RedactPII,
-    guarded_async_tool,
-    safety_context,
-)
-from agent_safety.exceptions import GuardViolation
+from agent_safety import PermissionDenied, tool
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import GuardViolation
+from agent_safety.core.guards import MaxLength, RedactPII
+from agent_safety.core.permissions import PermissionSet
 
 
-@guarded_async_tool("net.fetch", input_guards=[MaxLength(20)], output_guards=[RedactPII()])
+@tool("net.fetch", input_guards=[MaxLength(20)], output_guards=[RedactPII()])
 async def fetch(url: str) -> str:
     await asyncio.sleep(0)
     return f"{url} -> contact a@b.com"

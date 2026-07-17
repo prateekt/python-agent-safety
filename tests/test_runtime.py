@@ -4,8 +4,8 @@ import time
 import pytest
 
 from agent_safety import metered, safely, tool
+from agent_safety.core.exceptions import MemoryBudgetExceeded, TimeoutExceeded
 from agent_safety.easy import _bytes
-from agent_safety.exceptions import MemoryBudgetExceeded, TimeoutExceeded
 
 # -- per-call timeout (no hangups) ----------------------------------------
 

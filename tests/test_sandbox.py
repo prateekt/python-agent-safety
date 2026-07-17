@@ -1,14 +1,11 @@
 import pytest
 
-from agent_safety import (
-    NetworkAllowlist,
-    PathBoundary,
-    PermissionSet,
-    Stage,
-    guarded_tool,
-    safety_context,
-)
-from agent_safety.exceptions import GuardViolation
+from agent_safety import tool
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import GuardViolation
+from agent_safety.core.guards import Stage
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.core.sandbox import NetworkAllowlist, PathBoundary
 
 # -- PathBoundary ---------------------------------------------------------
 
@@ -56,7 +53,7 @@ def test_path_boundary_passes_non_string(tmp_path):
 
 
 def test_path_boundary_in_guarded_tool(tmp_path):
-    @guarded_tool("filesystem.read", input_guards=[PathBoundary(str(tmp_path))])
+    @tool("filesystem.read", input_guards=[PathBoundary(str(tmp_path))])
     def read_file(path: str) -> str:
         return f"read {path}"
 

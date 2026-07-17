@@ -2,8 +2,9 @@ import asyncio
 
 import pytest
 
-from agent_safety import ListSink, guard_mcp, safely
-from agent_safety.exceptions import (
+from agent_safety import guard_mcp, safely
+from agent_safety.core.audit import ListSink
+from agent_safety.core.exceptions import (
     ApprovalDenied,
     ConstitutionViolation,
     GuardViolation,

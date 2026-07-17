@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/prateekt/python-agent-safety/schemas/policy_spec.schema.json",
+  "title": "PolicySpec",
+  "description": "The JSON-serializable form of an agent_safety policy — the same options as the safely(...) keywords. Load with PolicySpec.from_dict(); enforce with safely_from_spec(spec) or safely(**spec.to_kwargs()).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "default": 1,
+      "description": "Spec format version."
+    },
+    "allow": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Capability patterns the agent may use (glob * wildcards). Empty means allow everything the enclosing policy allows."
+    },
+    "deny": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Capability patterns to forbid even if allowed. Deny always wins."
+    },
+    "calls": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Most tool calls allowed in the block."
+    },
+    "tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Most model tokens allowed (you report them via charge_tokens or metered())."
+    },
+    "per_second": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Most calls per second."
+    },
+    "per_minute": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Most calls per minute."
+    },
+    "seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Total wall-clock time budget for the block, in seconds."
+    },
+    "at_most": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Most tool calls running at once (concurrency cap)."
+    },
+    "no_repeats": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Stop after this many identical calls (runaway-loop breaker)."
+    },
+    "risk_budget": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Cap on cumulative risk (tools declare risk=N weights)."
+    },
+    "budget": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Money budget in dollars (pair with metered(call, model=...))."
+    },
+    "timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Max seconds for any single call — stops hangs and deadlocks."
+    },
+    "memory": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Cap on Python-heap growth inside the block, in bytes."
+    },
+    "max_input": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Reject tool inputs longer than this many characters."
+    },
+    "block": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Regex patterns; matching tool inputs are rejected."
+    },
+    "block_injections": {
+      "type": "boolean",
+      "default": false,
+      "description": "Reject 'ignore previous instructions'-style inputs."
+    },
+    "clean_text": {
+      "type": "boolean",
+      "default": false,
+      "description": "Strip hidden/invisible characters from inputs."
+    },
+    "honeytoken": {
+      "type": "string",
+      "description": "A planted canary secret; the run trips if it ever appears (exfiltration tripwire)."
+    },
+    "hide_secrets": {
+      "type": "boolean",
+      "default": false,
+      "description": "Scrub emails / API keys / secrets out of tool results."
+    },
+    "ask": {
+      "type": "boolean",
+      "default": false,
+      "description": "Require approval before each action. In a spec this is the console prompt; pass a custom approver at runtime via safely_from_spec(spec, ask=fn)."
+    },
+    "explain": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Capability patterns that require a rationale='...' argument. ['*'] means every call."
+    },
+    "rules": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Plain-English constitution rules. Require a judge= callable at runtime: safely_from_spec(spec, judge=fn)."
+    },
+    "monitor": {
+      "type": "boolean",
+      "default": false,
+      "description": "Dry run: block nothing, log what WOULD be blocked."
+    },
+    "log": {
+      "type": "boolean",
+      "default": false,
+      "description": "Print every safety decision. Pass a custom sink at runtime via safely_from_spec(spec, log=fn)."
+    }
+  }
+}

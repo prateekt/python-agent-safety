@@ -15,8 +15,8 @@ This shows two things:
 
 import asyncio
 
-from agent_safety import ConcurrencyLimit, safely, tool
-from agent_safety.exceptions import PermissionDenied
+from agent_safety import PermissionDenied, safely, tool
+from agent_safety.core import ConcurrencyLimit
 
 # A shared cap: at most 2 tool calls run at once, total, across every agent.
 SHARED = ConcurrencyLimit(2)

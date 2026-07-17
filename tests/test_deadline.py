@@ -1,6 +1,10 @@
 import pytest
 
-from agent_safety import Deadline, DeadlineExceeded, PermissionSet, guarded_tool, safety_context
+from agent_safety import tool
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import DeadlineExceeded
+from agent_safety.core.limits import Deadline
+from agent_safety.core.permissions import PermissionSet
 
 
 def test_deadline_starts_on_first_call_and_expires():
@@ -27,7 +31,7 @@ def test_deadline_rejects_nonpositive():
         Deadline(0)
 
 
-@guarded_tool("x.do")
+@tool("x.do")
 def do_thing():
     return "done"
 

@@ -27,7 +27,7 @@ Two things to know:
 ``calls=``           most tool calls allowed
 ``tokens=``          most model tokens allowed (you report them)
 ``per_second=``      most calls per second  (also ``per_minute=``)
-``seconds=``         a *total* time budget, in seconds
+``total_seconds=``   a *total* time budget, in seconds
 ``timeout=``         max seconds for any *single* call — stops hangs/deadlocks
 ``memory=``          cap Python-heap growth in the block: ``memory="500MB"``
 ``at_most=``         most tool calls running at once (waits for a free slot)
@@ -54,24 +54,16 @@ Everything the power API offers is still here (``safety_context``, ``PermissionS
 
 from __future__ import annotations
 
-import inspect
+import warnings
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Union, cast
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Union
 
-from .approval import ApprovalGate, ApprovalRequest
-from .audit import AuditEvent, AuditSink
-from .backends import BackendQuota, BudgetBackend, BudgetLimits
-from .constitution import ConstitutionGate
-from .context import safety_context
-from .decorators import guarded_async_tool, guarded_tool
-from .distributed import (
-    load_signing_keys,
-    should_require_envelope,
-    should_shadow_envelope,
-)
-from .envelope import CapabilityEnvelope, EnvelopeVerifier
-from .exceptions import PermissionDenied
-from .guards import (
+from .core.action import Action
+from .core.audit import AuditEvent, AuditSink
+from .core.context import safety_context
+from .core.exceptions import PermissionDenied
+from .core.gates import ApprovalGate, ConstitutionGate, PreviewGate, ReasoningGate
+from .core.guards import (
     DenyPattern,
     Guard,
     Honeytoken,
@@ -81,31 +73,22 @@ from .guards import (
     SecretScanner,
     UnicodeSanitizer,
 )
-from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
-from .nonces import NonceStore, nonce_store_from_env
-from .observability import StructuredLog
-from .permissions import PermissionSet
-from .policy import Policy
-from .preview import PreviewGate
-from .quota import CostBudget, Quota, RiskBudget
-from .reasoning import ReasoningGate
-from .run import RunContext, run_context
+from .core.limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
+from .core.observability import StructuredLog
+from .core.permissions import PermissionSet
+from .core.pipeline import make_tool_wrapper
+from .core.policy import Policy
+from .core.quota import CostBudget, Quota, QuotaLike, RiskBudget
+from .distributed.backends import BackendQuota, BudgetBackend, BudgetLimits
+from .distributed.config import DistributedConfig
+from .distributed.envelope import CapabilityEnvelope, EnvelopeVerifier
+from .distributed.nonces import NonceStore
+from .distributed.run import RunContext, run_context
 
 _Names = Union[str, Iterable[str], None]
 
 
 # -- @tool ----------------------------------------------------------------
-
-def _make_tool(
-    func: Callable[..., Any],
-    capability: str,
-    cache: bool = False,
-    risk: int = 0,
-    preview: Optional[Callable[..., Any]] = None,
-) -> Callable[..., Any]:
-    decorate = guarded_async_tool if inspect.iscoroutinefunction(func) else guarded_tool
-    return decorate(capability, idempotent=cache, risk=risk, preview=preview)(func)
-
 
 def tool(
     capability: Union[str, Callable[..., Any], None] = None,
@@ -113,37 +96,58 @@ def tool(
     cache: bool = False,
     risk: int = 0,
     preview: Optional[Callable[..., Any]] = None,
+    input_guards: Iterable[Guard] = (),
+    output_guards: Iterable[Guard] = (),
 ) -> Any:
-    """Mark a function as a tool an agent may call.
+    """Mark a function as a tool an agent may call — the one tool decorator.
 
     ``@tool`` names the capability after the function; ``@tool("my.capability")``
     names it yourself. Works on ``def`` and ``async def`` automatically. Pass
     ``cache=True`` for a pure tool to reuse the result of identical calls,
-    ``risk=N`` to weight it against a risk budget, or ``preview=fn`` to describe
-    what a call would do for a preview gate.
+    ``risk=N`` to weight it against a risk budget, ``preview=fn`` to describe
+    what a call would do for a preview gate, or ``input_guards=`` /
+    ``output_guards=`` to attach per-tool guards on top of the policy's.
     """
+    def decorate(func: Callable[..., Any], cap: str) -> Callable[..., Any]:
+        return make_tool_wrapper(
+            func, cap,
+            input_guards=input_guards, output_guards=output_guards,
+            cache=cache, risk=risk, preview=preview,
+        )
+
     if callable(capability):                       # bare @tool
-        return _make_tool(capability, capability.__name__, cache, risk, preview)
+        return decorate(capability, capability.__name__)
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        return _make_tool(func, capability or func.__name__, cache, risk, preview)
+        return decorate(func, capability or func.__name__)
 
     return decorator
 
 
-def guard(*funcs: Callable[..., Any]) -> Any:
+def guard_tools(*funcs: Callable[..., Any]) -> Any:
     """Wrap functions you already have as guarded tools — without editing them.
 
     Like applying ``@tool`` to each, in bulk. Handy for adding safety to an
     existing toolset::
 
-        safe_search, safe_fetch = guard(search, fetch)
+        safe_search, safe_fetch = guard_tools(search, fetch)
 
     Returns the single wrapped function, or a tuple when you pass several. Call
     them inside a ``safely(...)`` block, exactly like a ``@tool``.
     """
     wrapped = tuple(tool(f) for f in funcs)
     return wrapped[0] if len(wrapped) == 1 else wrapped
+
+
+def guard(*funcs: Callable[..., Any]) -> Any:
+    """Deprecated alias of :func:`guard_tools` (the old name collided with the
+    :class:`~agent_safety.guards.Guard` protocol)."""
+    warnings.warn(
+        "guard() is deprecated; use guard_tools() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return guard_tools(*funcs)
 
 
 class Profiles:
@@ -253,12 +257,12 @@ def _concurrency(at_most: Union[int, ConcurrencyLimit, None]) -> Optional[Concur
     return ConcurrencyLimit(at_most)
 
 
-def _console_approver(request: ApprovalRequest) -> bool:
+def _console_approver(request: Action) -> bool:
     answer = input(f"Allow {request.tool}({request.capability})? [y/N] ")
     return answer.strip().lower() in ("y", "yes")
 
 
-def _approval(ask: Union[bool, Callable[[ApprovalRequest], Any], None]) -> Optional[ApprovalGate]:
+def _approval(ask: Union[bool, Callable[[Action], Any], None]) -> Optional[ApprovalGate]:
     if not ask:
         return None
     approver = _console_approver if ask is True else ask
@@ -317,7 +321,8 @@ def safely(
     tokens: Optional[int] = None,
     per_second: Optional[int] = None,
     per_minute: Optional[int] = None,
-    seconds: Optional[float] = None,
+    total_seconds: Optional[float] = None,
+    seconds: Optional[float] = None,  # deprecated alias of total_seconds
     at_most: Union[int, ConcurrencyLimit, None] = None,
     hide_secrets: bool = False,
     max_input: Optional[int] = None,
@@ -329,7 +334,7 @@ def safely(
     budget: Union[str, float, None] = None,
     timeout: Optional[float] = None,
     memory: Union[str, int, None] = None,
-    ask: Union[bool, Callable[[ApprovalRequest], Any], None] = None,
+    ask: Union[bool, Callable[[Action], Any], None] = None,
     explain: Union[bool, str, Iterable[str], None] = None,
     rule: Union[str, Iterable[str], None] = None,
     judge: Optional[Callable[..., Any]] = None,
@@ -342,6 +347,7 @@ def safely(
     envelope_keys: Optional[Dict[str, bytes]] = None,
     backend: Optional[BudgetBackend] = None,
     nonce_store: Optional[NonceStore] = None,
+    distributed: Optional[DistributedConfig] = None,
 ) -> Iterator[Policy]:
     """Run a block of code under simple, plain-English safety rules.
 
@@ -350,33 +356,45 @@ def safely(
 
     Distributed keywords:
 
+    * ``distributed=`` — a :class:`~agent_safety.distributed.DistributedConfig`
+      controlling rollout mode, signing keys, and shared Redis. When omitted,
+      one is read from the ``AGENT_SAFETY_*`` environment variables.
     * ``run=`` — install a :class:`~agent_safety.run.RunContext` for audit correlation.
     * ``envelope=`` — verify a signed :class:`~agent_safety.envelope.CapabilityEnvelope`
       on entry (hot path; no gateway hop per tool call).
     * ``envelope_keys=`` — map of ``kid -> secret`` for envelope verification
-      (falls back to ``AGENT_SAFETY_SIGNING_KEYS``).
+      (falls back to the config's signing keys).
     * ``backend=`` — shared :class:`~agent_safety.backends.BudgetBackend`; with
       ``run=``, tool call/token charges go to the backend (Redis/memory) instead of
       a process-local quota. When ``envelope=`` is also set, call budget was already
       charged at mint time — the backend is used for token charges only.
     * ``nonce_store=`` — shared :class:`~agent_safety.nonces.NonceStore` for
-      cross-worker envelope replay protection (defaults to Redis when
-      ``AGENT_SAFETY_REDIS_URL`` is set, else a process-local store).
+      cross-worker envelope replay protection (defaults to the config's Redis
+      when set, else a process-local store).
 
-    Rollout (``AGENT_SAFETY_DISTRIBUTED``): ``enforce`` requires an envelope;
-    ``canary`` requires one for a hash-fraction of ``task_id``s; ``shadow`` verifies
-    when present but does not block on failure.
+    Rollout modes: ``enforce`` requires an envelope; ``canary`` requires one for
+    a hash-fraction of ``task_id``s; ``shadow`` verifies when present but does
+    not block on failure.
     """
-    keys = dict(envelope_keys) if envelope_keys else load_signing_keys()
+    if seconds is not None:
+        warnings.warn(
+            "safely(seconds=...) is deprecated; use total_seconds= (it is the "
+            "total time budget, distinct from the per-call timeout=)",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        if total_seconds is None:
+            total_seconds = seconds
+    cfg = distributed if distributed is not None else DistributedConfig.from_env()
+    keys = dict(envelope_keys) if envelope_keys else cfg.signing_keys
     task_id = run.task_id if run is not None else (envelope.task_id if envelope else None)
-    org = run.org_id if run is not None else None
 
-    if should_require_envelope(task_id, org_id=org) and envelope is None:
+    if cfg.should_require_envelope(task_id) and envelope is None:
         raise PermissionDenied("*", "capability envelope required in distributed mode")
 
     store = nonce_store
     if store is None and envelope is not None:
-        store = nonce_store_from_env()
+        store = cfg.nonce_store()
 
     verifier: Optional[EnvelopeVerifier] = None
     if envelope is not None and keys:
@@ -394,9 +412,9 @@ def safely(
                 except PermissionDenied as exc:
                     # Shadow: verify when present but do not block on failure.
                     # Enforce / canary (required) / explicit local envelope: fail closed.
-                    if should_require_envelope(task_id, org_id=org):
+                    if cfg.should_require_envelope(task_id):
                         raise
-                    if should_shadow_envelope(org):
+                    if cfg.should_shadow_envelope():
                         StructuredLog(
                             "warning",
                             f"envelope verify failed (shadow): {exc}",
@@ -407,7 +425,7 @@ def safely(
                         ).emit()
                     else:
                         raise
-            elif should_require_envelope(task_id, org_id=org):
+            elif cfg.should_require_envelope(task_id):
                 raise PermissionDenied(
                     envelope.capability,
                     "envelope_keys / AGENT_SAFETY_SIGNING_KEYS required to verify envelope",
@@ -437,9 +455,9 @@ def safely(
                 charge_calls=envelope is None,
             )
 
-        quota: Optional[Quota] = None
+        quota: Optional[QuotaLike] = None
         if shared_quota is not None:
-            quota = cast(Quota, shared_quota)
+            quota = shared_quota
         elif calls or tokens:
             quota = Quota(max_calls=calls, max_tokens=tokens)
 
@@ -471,7 +489,7 @@ def safely(
             perms,
             quota=quota,
             rate_limit=rate,
-            deadline=Deadline(seconds) if seconds else None,
+            deadline=Deadline(total_seconds) if total_seconds else None,
             concurrency=conc,
             risk_budget=risk,
             cost_budget=CostBudget(_money(budget)) if budget is not None else None,

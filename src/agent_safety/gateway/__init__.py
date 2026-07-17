@@ -1,17 +1,12 @@
-"""Policy gateway package."""
+"""Deprecated module location — use :mod:`agent_safety.distributed.gateway` instead."""
 
-from .server import (
-    GatewayConfig,
-    PolicyGateway,
-    create_handler,
-    make_service_jwt,
-    serve_gateway,
+import warnings as _warnings
+
+_warnings.warn(
+    "agent_safety.gateway has moved to agent_safety.distributed.gateway; "
+    "this alias will be removed in a future release",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
-__all__ = [
-    "GatewayConfig",
-    "PolicyGateway",
-    "create_handler",
-    "make_service_jwt",
-    "serve_gateway",
-]
+from ..distributed.gateway import *  # noqa: E402,F401,F403

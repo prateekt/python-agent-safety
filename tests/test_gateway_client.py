@@ -7,10 +7,11 @@ import uuid
 
 import pytest
 
-from agent_safety.gateway.client import GatewayClient
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway, serve_gateway
-from agent_safety.observability import CircuitBreaker
-from agent_safety.policy_spec import PolicySpec
+from agent_safety.core.observability import CircuitBreaker
+from agent_safety.distributed.backends import MemoryBackend
+from agent_safety.distributed.gateway.client import GatewayClient
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway, serve_gateway
+from agent_safety.distributed.policy_spec import PolicySpec
 
 
 def _free_port() -> int:
@@ -22,7 +23,7 @@ def _free_port() -> int:
 @pytest.fixture
 def live_gateway():
     secret = b"client-test-signing-secret-32b!"
-    backend = __import__("agent_safety.backends", fromlist=["MemoryBackend"]).MemoryBackend()
+    backend = MemoryBackend()
     gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend))
     spec = PolicySpec(allow=("search",), calls=5)
     gw.config.registry.publish(spec)

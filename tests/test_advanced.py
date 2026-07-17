@@ -2,20 +2,15 @@ import asyncio
 
 import pytest
 
-from agent_safety import (
-    Honeytoken,
-    ListSink,
-    Stage,
-    guarded_async_tool,
-    safely,
-    tool,
-)
-from agent_safety.exceptions import (
+from agent_safety import safely, tool
+from agent_safety.core.audit import ListSink
+from agent_safety.core.exceptions import (
     ApprovalDenied,
     ConstitutionViolation,
     HoneytokenTripped,
     RiskBudgetExceeded,
 )
+from agent_safety.core.guards import Honeytoken, Stage
 
 # -- constitutional rules -------------------------------------------------
 
@@ -59,7 +54,7 @@ def test_async_judge_on_sync_tool_raises_runtime_error():
 
 
 def test_async_judge_on_async_tool():
-    @guarded_async_tool("net.act")
+    @tool("net.act")
     async def act(x):
         await asyncio.sleep(0)
         return x

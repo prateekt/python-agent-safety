@@ -17,19 +17,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agent_safety import safely, tool, trace_span, validate_args
-from agent_safety.audit import AuditEvent, HashChainSink, JsonlSink, ListSink
-from agent_safety.backends import BackendQuota, BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.backends.redis_backend import RedisBudgetBackend, redis_backend
-from agent_safety.distributed import (
-    canary_percent,
-    gateway_url,
-    load_signing_keys,
-    org_id_from_env,
-    should_require_envelope,
-)
-from agent_safety.envelope import EnvelopeSigner, EnvelopeVerifier
-from agent_safety.exceptions import (
+from agent_safety import safely, tool
+from agent_safety.core.audit import AuditEvent, HashChainSink, JsonlSink, ListSink
+from agent_safety.core.exceptions import (
     CostBudgetExceeded,
     GuardViolation,
     LoopDetected,
@@ -39,14 +29,30 @@ from agent_safety.exceptions import (
     RiskBudgetExceeded,
     TimeoutExceeded,
 )
-from agent_safety.gateway.client import GatewayClient
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway, serve_gateway
-from agent_safety.observability import CircuitBreaker, PrometheusMetrics
-from agent_safety.policy_spec import PolicySpec, safely_from_spec
-from agent_safety.quota import CostBudget, Quota, RiskBudget
-from agent_safety.run import RunContext
-from agent_safety.runtime import _with_thread, call_with_timeout
-from agent_safety.tracing import current_span, traceparent_header
+from agent_safety.core.observability import CircuitBreaker, PrometheusMetrics
+from agent_safety.core.quota import CostBudget, Quota, RiskBudget
+from agent_safety.core.runtime import _with_thread, call_with_timeout
+from agent_safety.core.tracing import current_span, trace_span, traceparent_header
+from agent_safety.core.validation import validate_args
+from agent_safety.distributed.backends import (
+    BackendQuota,
+    BudgetCharge,
+    BudgetLimits,
+    MemoryBackend,
+)
+from agent_safety.distributed.backends.redis_backend import RedisBudgetBackend, redis_backend
+from agent_safety.distributed.config import (
+    canary_percent,
+    gateway_url,
+    load_signing_keys,
+    org_id_from_env,
+    should_require_envelope,
+)
+from agent_safety.distributed.envelope import EnvelopeSigner, EnvelopeVerifier
+from agent_safety.distributed.gateway.client import GatewayClient
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway, serve_gateway
+from agent_safety.distributed.policy_spec import PolicySpec, safely_from_spec
+from agent_safety.distributed.run import RunContext
 
 
 @tool
@@ -219,7 +225,7 @@ def test_memory_backend_risk_and_token_rollback_on_failure():
 
 
 def test_default_memory_backend_singleton():
-    from agent_safety.backends import default_memory_backend
+    from agent_safety.distributed.backends import default_memory_backend
 
     a = default_memory_backend()
     b = default_memory_backend()
@@ -265,13 +271,13 @@ def test_envelope_unknown_kid_not_yet_valid_glob_and_nonce():
 
     v.mark_spent("manual-nonce", time.time() + 60)
     # mark_spent goes through the nonce store
-    from agent_safety.nonces import MemoryNonceStore
+    from agent_safety.distributed.nonces import MemoryNonceStore
     assert isinstance(v._nonce_store, MemoryNonceStore)
 
     # from_dict with bytes signature
     raw = env.to_dict()
     raw["signature"] = env.signature
-    from agent_safety.envelope import CapabilityEnvelope
+    from agent_safety.distributed.envelope import CapabilityEnvelope
     restored = CapabilityEnvelope.from_dict(raw)
     assert restored.capability == env.capability
 
@@ -281,7 +287,7 @@ def test_envelope_allow_list_reject_without_glob():
     import hashlib
     import hmac
 
-    from agent_safety.envelope import CapabilityEnvelope
+    from agent_safety.distributed.envelope import CapabilityEnvelope
 
     bad = CapabilityEnvelope(
         task_id="t",
@@ -470,7 +476,7 @@ def test_runtime_thread_timeout_path():
 
     assert _with_thread(lambda: "ok", (), {}, 1.0) == "ok"
 
-    with patch("agent_safety.runtime._can_use_signal", return_value=False):
+    with patch("agent_safety.core.runtime._can_use_signal", return_value=False):
         with pytest.raises(TimeoutExceeded):
             call_with_timeout(slow, (), {}, 0.05)
 
@@ -545,8 +551,9 @@ def test_policy_spec_per_minute_and_safely_from_spec_backend():
     assert limits.rate_per_second == 30
     assert limits.rate_window == 60.0
 
-    policy = spec.to_policy()
-    assert policy.allows("ping")
+    perms = spec.permissions()
+    assert perms.allows("ping")
+    assert not perms.allows("nope")
 
     backend = MemoryBackend()
     with safely_from_spec(
@@ -603,7 +610,7 @@ def test_enforce_requires_keys_when_envelope_present(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_permission_set_empty_cap_serialize_and_str():
-    from agent_safety.permissions import PermissionSet
+    from agent_safety.core.permissions import PermissionSet
 
     ps = PermissionSet.of("fs.*", deny=["fs.delete"])
     assert not ps.allows("")
@@ -616,8 +623,11 @@ def test_permission_set_empty_cap_serialize_and_str():
 
 
 def test_policy_explain_and_deadline_rate_audit():
-    from agent_safety import Deadline, PermissionSet, Policy, Quota, RateLimit
-    from agent_safety.exceptions import DeadlineExceeded, RateLimitExceeded
+    from agent_safety.core.exceptions import DeadlineExceeded, RateLimitExceeded
+    from agent_safety.core.limits import Deadline, RateLimit
+    from agent_safety.core.permissions import PermissionSet
+    from agent_safety.core.policy import Policy
+    from agent_safety.core.quota import Quota
 
     policy = Policy(
         permissions=PermissionSet.of("ping"),
@@ -645,14 +655,14 @@ def test_policy_explain_and_deadline_rate_audit():
 
 
 def test_constitution_gate_rejects_empty_rules():
-    from agent_safety.constitution import ConstitutionGate
+    from agent_safety.core.gates import ConstitutionGate
 
     with pytest.raises(ValueError, match="at least one rule"):
         ConstitutionGate(rules=["", "  "], judge=lambda *_: True)
 
 
 def test_gateway_jwt_validation_paths():
-    from agent_safety.gateway.server import make_service_jwt
+    from agent_safety.distributed.gateway.server import make_service_jwt
 
     secret = b"jwt-core-secret-32-bytes-long!!!"
     gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, jwt_secret=secret))
@@ -714,7 +724,7 @@ def test_gateway_charge_tokens_error_path():
 
 
 def test_transaction_commit_and_compensation_error():
-    from agent_safety import rollback
+    from agent_safety.core.transaction import rollback
 
     steps: list[str] = []
     with rollback() as tx:

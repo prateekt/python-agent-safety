@@ -7,14 +7,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_safety.backends import BudgetCharge, BudgetLimits
-from agent_safety.backends.redis_backend import RedisBudgetBackend, redis_backend
-from agent_safety.exceptions import QuotaExceeded
+from agent_safety.core.exceptions import QuotaExceeded
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits
+from agent_safety.distributed.backends.redis_backend import RedisBudgetBackend, redis_backend
 
 
 def test_redis_backend_fallback_without_client():
     backend = redis_backend(None)
-    from agent_safety.backends import MemoryBackend
+    from agent_safety.distributed.backends import MemoryBackend
     assert isinstance(backend, MemoryBackend)
 
 

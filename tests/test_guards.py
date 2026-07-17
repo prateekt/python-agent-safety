@@ -1,6 +1,7 @@
 import pytest
 
-from agent_safety import (
+from agent_safety.core.exceptions import GuardViolation
+from agent_safety.core.guards import (
     Compose,
     DenyPattern,
     MaxLength,
@@ -8,7 +9,6 @@ from agent_safety import (
     RedactPII,
     Stage,
 )
-from agent_safety.exceptions import GuardViolation
 
 
 def test_max_length_passes_and_blocks():

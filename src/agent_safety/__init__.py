@@ -1,306 +1,254 @@
-"""agent_safety — idiomatic Python constructs for AI-agent safety.
+"""agent_safety — least-privilege safety for AI agents, in two ideas.
 
-Provider-agnostic by design: the safety primitives govern a tool-calling agent
-the same way whether the model is **Claude, OpenAI, or Gemini**. The core has no
-LLM SDK dependency; :mod:`agent_safety.integrations` provides the thin per-provider
-glue (tool-schema dialects + a neutral dispatch).
+Mark a function with ``@tool``, then run it inside a ``safely(...)`` block that
+says, in plain words, what's allowed::
 
-The library expresses agent safety through familiar Python constructs:
+    from agent_safety import tool, safely
 
-* a **context manager** (``with safety_context(...)``) that scopes an agent's
-  permissions, guards, quotas, and audit sinks — and can only ever *narrow* them
-  inside nested blocks;
-* **permission sets** (allow/deny capability patterns, deny-wins, default-deny);
-* **guards** — composable checks/transforms applied to prompts, tool inputs, and
-  outputs — surfaced via the ``@guarded_tool`` / ``@guarded_async_tool`` decorators;
-* **quotas** (call/token budgets) and **audit hooks** (a record of every decision).
-
-Quick start::
-
-    from agent_safety import safety_context, guarded_tool, PermissionSet
-    from agent_safety import MaxLength, RedactPII, PromptInjectionGuard, Quota
-
-    @guarded_tool("filesystem.read")
-    def read_file(path: str) -> str:
+    @tool
+    def read_file(path):
         return open(path).read()
 
-    with safety_context(
-        PermissionSet.of("filesystem.read"),
-        output_guards=[RedactPII()],
-        prompt_guards=[PromptInjectionGuard(), MaxLength(8000)],
-        quota=Quota(max_calls=25),
-    ):
-        contents = read_file("notes.txt")   # allowed, PII-redacted, budget-charged
+    with safely(allow="read_file", calls=10, hide_secrets=True):
+        text = read_file("notes.txt")   # allowed, budget-counted, secrets scrubbed
+        # anything you didn't allow simply can't run here
+
+Every ``safely`` option is a plain keyword (``calls=``, ``ask=``, ``monitor=``,
+…) — see :mod:`agent_safety.easy` for the full list, or the README's cheat
+sheet. Provider-agnostic: the same policy governs a Claude, OpenAI, Gemini, or
+MCP agent unchanged.
+
+Going deeper:
+
+* ``agent_safety.core`` — the engine (``Policy``, ``PermissionSet``, guards,
+  budgets, gates, the call pipeline) for advanced composition;
+* ``agent_safety.integrations`` — provider tool dialects (``ToolRegistry``)
+  and the MCP wrapper (``guard_mcp``);
+* ``agent_safety.distributed`` — envelopes, shared budgets, and the policy
+  gateway, for governing agents across processes and machines.
 """
 
 from __future__ import annotations
 
-from .action import Action
-from .approval import ApprovalGate
-from .approval import ApprovalRequest as ApprovalRequest  # back-compat alias of Action
-from .audit import AuditEvent, AuditSink, HashChainSink, JsonlSink, ListSink, MetricsSink
-from .backends import (
-    BudgetBackend,
-    BudgetCharge,
-    BudgetLimits,
-    ChargeResult,
-    MemoryBackend,
-    default_memory_backend,
-)
-from .backends.dynamo_backend import DynamoBudgetBackend, dynamo_backend
-from .backends.mongo_backend import MongoBudgetBackend, mongo_backend
-from .backends.redis_backend import RedisBudgetBackend, redis_backend
-from .backends.sql_backend import SqlBudgetBackend, sql_backend
-from .constitution import ConstitutionGate
-from .context import (
-    charge_call,
-    charge_cost,
-    charge_tokens,
-    check_input,
-    check_output,
-    check_prompt,
-    current_policy,
-    is_allowed,
-    require,
-    safety_context,
-)
-from .decorators import guarded_async_tool, guarded_tool
-from .distributed import (
-    DistributedMode,
-    distributed_mode,
-    gateway_url,
-    load_signing_keys,
-    should_enforce_envelope,
-    should_require_envelope,
-    should_shadow_envelope,
-)
-from .easy import Profiles, guard, safely, tool
-from .envelope import CapabilityEnvelope, EnvelopeSigner, EnvelopeVerifier
-from .events import MintResponse, ToolRequest, ToolResult
-from .exceptions import (
+from typing import Any
+
+from .core.action import Action
+from .core.audit import AuditEvent
+from .core.exceptions import (
     AgentSafetyError,
     ApprovalDenied,
-    ConstitutionViolation,
-    CostBudgetExceeded,
-    DeadlineExceeded,
-    ExplanationRequired,
     GuardViolation,
-    HoneytokenTripped,
-    LoopDetected,
-    MemoryBudgetExceeded,
     PermissionDenied,
     QuotaExceeded,
-    RateLimitExceeded,
-    RiskBudgetExceeded,
-    RollbackError,
-    TimeoutExceeded,
 )
-from .guards import (
-    Compose,
-    DenyPattern,
-    Guard,
-    Honeytoken,
-    MaxLength,
-    PromptInjectionGuard,
-    RedactPII,
-    SecretScanner,
-    Stage,
-    UnicodeSanitizer,
-    run_guards,
-)
-from .integrations import DIALECTS, ToolCall, ToolRegistry, ToolSpec, parse_tool_calls
-from .limits import ConcurrencyLimit, Deadline, LoopGuard, RateLimit
-from .mcp import SafeMCP, guard_mcp
-from .nonces import (
-    DynamoNonceStore,
-    MemoryNonceStore,
-    MongoNonceStore,
-    RedisNonceStore,
-    SqlNonceStore,
-    nonce_store_from_env,
-)
-from .observability import CircuitBreaker, PrometheusMetrics, StructuredLog
-from .permissions import PermissionSet
-from .policy import Explanation, Policy
-from .policy_spec import PolicyRegistry, PolicySpec, safely_from_spec
-from .preview import PreviewGate
-from .prices import price_for
-from .quota import CostBudget, Quota, RiskBudget
-from .reasoning import (
-    ReasoningGate,
-    Thought,
-    ThoughtTrace,
-    current_trace,
-    record_thought,
-    thought_trace,
-)
-from .reasoning import ReasoningRequest as ReasoningRequest  # back-compat alias of Action
-from .run import RunContext, current_run, run_context
-from .sandbox import NetworkAllowlist, PathBoundary
-from .schema import Param, tool_description, tool_schema
-from .tracing import current_span, trace_span
-from .transaction import Transaction, async_rollback, rollback
-from .usage import Price, TokenUsage, charge_usage, extract_tokens, extract_usage, metered
-from .validation import validate_args
+from .core.usage import metered
+from .distributed.config import DistributedConfig
+from .distributed.policy_spec import PolicySpec, safely_from_spec
+from .easy import Profiles, guard_tools, safely, tool
+from .easy import guard as guard  # deprecated alias of guard_tools; warns when called
+from .integrations.mcp import guard_mcp
+from .integrations.providers import ToolRegistry, parse_tool_calls
 
 __version__ = "0.9.0"
 
+# The stable public surface. Everything else lives in agent_safety.core,
+# agent_safety.integrations, and agent_safety.distributed; the old flat names
+# still resolve (with a DeprecationWarning) via __getattr__ below.
 __all__ = [
-    # the easy front door (start here)
+    # the golden path
     "tool",
     "safely",
-    "guard",
+    "guard_tools",
     "Profiles",
-    # context / ``with`` construct
-    "safety_context",
-    "current_policy",
-    "require",
-    "is_allowed",
-    "check_prompt",
-    "check_input",
-    "check_output",
-    "charge_call",
-    "charge_tokens",
-    "charge_cost",
-    # automatic token & cost accounting
+    # token & cost accounting for model calls
     "metered",
-    "charge_usage",
-    "extract_tokens",
-    "extract_usage",
-    "Price",
-    "TokenUsage",
-    "price_for",
-    # permissions / policy
-    "PermissionSet",
-    "Policy",
-    # decorators
-    "guarded_tool",
-    "guarded_async_tool",
-    # guards
-    "Guard",
-    "Stage",
-    "MaxLength",
-    "DenyPattern",
-    "PromptInjectionGuard",
-    "RedactPII",
-    "SecretScanner",
-    "UnicodeSanitizer",
-    "Honeytoken",
-    "Compose",
-    "run_guards",
-    # sandbox guards
-    "PathBoundary",
-    "NetworkAllowlist",
-    # quota & limits
-    "Quota",
-    "RateLimit",
-    "Deadline",
-    "ConcurrencyLimit",
-    "RiskBudget",
-    "CostBudget",
-    "LoopGuard",
-    # the object every safety hook (approver / judge / validator) receives
-    "Action",
-    # human-in-the-loop approval & previews
-    "ApprovalGate",
-    "PreviewGate",
-    # constitutional rules
-    "ConstitutionGate",
-    # explainability / reasoning
-    "ReasoningGate",
-    "thought_trace",
-    "record_thought",
-    "current_trace",
-    "ThoughtTrace",
-    "Thought",
-    # tracing & metrics
-    "trace_span",
-    "current_span",
-    "MetricsSink",
-    # audit
-    "AuditEvent",
-    "AuditSink",
-    "ListSink",
-    "JsonlSink",
-    # provider integrations
+    # agent-loop integration
     "ToolRegistry",
-    "ToolSpec",
-    "ToolCall",
     "parse_tool_calls",
-    "DIALECTS",
-    # MCP
     "guard_mcp",
-    "SafeMCP",
-    # schema inference & validation
-    "tool_schema",
-    "tool_description",
-    "Param",
-    "validate_args",
-    # transactional rollback
-    "rollback",
-    "async_rollback",
-    "Transaction",
-    # introspection
-    "Explanation",
-    # exceptions
+    # serializable config + explicit distributed setup
+    "PolicySpec",
+    "safely_from_spec",
+    "DistributedConfig",
+    # what hooks receive / what audit emits
+    "Action",
+    "AuditEvent",
+    # the exceptions you actually catch
     "AgentSafetyError",
     "PermissionDenied",
     "GuardViolation",
     "QuotaExceeded",
-    "RateLimitExceeded",
-    "LoopDetected",
     "ApprovalDenied",
-    "RollbackError",
-    "ExplanationRequired",
-    "DeadlineExceeded",
-    "ConstitutionViolation",
-    "HoneytokenTripped",
-    "RiskBudgetExceeded",
-    "CostBudgetExceeded",
-    "TimeoutExceeded",
-    "MemoryBudgetExceeded",
-    # distributed
-    "RunContext",
-    "current_run",
-    "run_context",
-    "BudgetBackend",
-    "BudgetCharge",
-    "BudgetLimits",
-    "ChargeResult",
-    "MemoryBackend",
-    "default_memory_backend",
-    "SqlBudgetBackend",
-    "sql_backend",
-    "RedisBudgetBackend",
-    "redis_backend",
-    "MongoBudgetBackend",
-    "mongo_backend",
-    "DynamoBudgetBackend",
-    "dynamo_backend",
-    "PolicySpec",
-    "PolicyRegistry",
-    "safely_from_spec",
-    "CapabilityEnvelope",
-    "EnvelopeSigner",
-    "EnvelopeVerifier",
-    "MemoryNonceStore",
-    "RedisNonceStore",
-    "SqlNonceStore",
-    "MongoNonceStore",
-    "DynamoNonceStore",
-    "nonce_store_from_env",
-    "ToolRequest",
-    "ToolResult",
-    "MintResponse",
-    "DistributedMode",
-    "distributed_mode",
-    "gateway_url",
-    "load_signing_keys",
-    "should_enforce_envelope",
-    "should_require_envelope",
-    "should_shadow_envelope",
-    "CircuitBreaker",
-    "PrometheusMetrics",
-    "StructuredLog",
-    "HashChainSink",
 ]
+
+# Old flat top-level names -> their new home. Kept importable for one release;
+# each access warns once so code can migrate gradually.
+_MOVED = {
+    # core: context helpers
+    "safety_context": "core.context",
+    "current_policy": "core.context",
+    "in_context": "core.context",
+    "require": "core.context",
+    "is_allowed": "core.context",
+    "check_prompt": "core.context",
+    "check_input": "core.context",
+    "check_output": "core.context",
+    "charge_call": "core.context",
+    "charge_tokens": "core.context",
+    "charge_cost": "core.context",
+    # core: policy & permissions
+    "PermissionSet": "core.permissions",
+    "Policy": "core.policy",
+    "Explanation": "core.policy",
+    # core: decorators (deprecated in favour of @tool)
+    "guarded_tool": "core.pipeline",
+    "guarded_async_tool": "core.pipeline",
+    "make_tool_wrapper": "core.pipeline",
+    # core: guards
+    "Guard": "core.guards",
+    "Stage": "core.guards",
+    "MaxLength": "core.guards",
+    "DenyPattern": "core.guards",
+    "PromptInjectionGuard": "core.guards",
+    "RedactPII": "core.guards",
+    "SecretScanner": "core.guards",
+    "UnicodeSanitizer": "core.guards",
+    "Honeytoken": "core.guards",
+    "Compose": "core.guards",
+    "run_guards": "core.guards",
+    "PathBoundary": "core.sandbox",
+    "NetworkAllowlist": "core.sandbox",
+    # core: budgets & limits
+    "Quota": "core.quota",
+    "QuotaLike": "core.quota",
+    "RiskBudget": "core.quota",
+    "CostBudget": "core.quota",
+    "RateLimit": "core.limits",
+    "Deadline": "core.limits",
+    "ConcurrencyLimit": "core.limits",
+    "LoopGuard": "core.limits",
+    # core: gates
+    "ApprovalGate": "core.gates",
+    "PreviewGate": "core.gates",
+    "ConstitutionGate": "core.gates",
+    "ReasoningGate": "core.gates",
+    # core: reasoning trace
+    "thought_trace": "core.reasoning",
+    "record_thought": "core.reasoning",
+    "current_trace": "core.reasoning",
+    "ThoughtTrace": "core.reasoning",
+    "Thought": "core.reasoning",
+    # core: tracing & audit sinks
+    "trace_span": "core.tracing",
+    "current_span": "core.tracing",
+    "AuditSink": "core.audit",
+    "ListSink": "core.audit",
+    "JsonlSink": "core.audit",
+    "MetricsSink": "core.audit",
+    "HashChainSink": "core.audit",
+    # core: usage & prices
+    "charge_usage": "core.usage",
+    "extract_tokens": "core.usage",
+    "extract_usage": "core.usage",
+    "Price": "core.usage",
+    "TokenUsage": "core.usage",
+    "price_for": "core.prices",
+    # core: schema & validation
+    "tool_schema": "core.schema",
+    "tool_description": "core.schema",
+    "Param": "core.schema",
+    "validate_args": "core.validation",
+    # core: transactions
+    "rollback": "core.transaction",
+    "async_rollback": "core.transaction",
+    "Transaction": "core.transaction",
+    # core: observability
+    "CircuitBreaker": "core.observability",
+    "PrometheusMetrics": "core.observability",
+    "StructuredLog": "core.observability",
+    # core: remaining exceptions
+    "RateLimitExceeded": "core.exceptions",
+    "LoopDetected": "core.exceptions",
+    "RollbackError": "core.exceptions",
+    "ExplanationRequired": "core.exceptions",
+    "DeadlineExceeded": "core.exceptions",
+    "ConstitutionViolation": "core.exceptions",
+    "HoneytokenTripped": "core.exceptions",
+    "RiskBudgetExceeded": "core.exceptions",
+    "CostBudgetExceeded": "core.exceptions",
+    "TimeoutExceeded": "core.exceptions",
+    "MemoryBudgetExceeded": "core.exceptions",
+    # integrations
+    "ToolSpec": "integrations.providers",
+    "ToolCall": "integrations.providers",
+    "DIALECTS": "integrations.providers",
+    "SafeMCP": "integrations.mcp",
+    # distributed
+    "RunContext": "distributed.run",
+    "current_run": "distributed.run",
+    "run_context": "distributed.run",
+    "BudgetBackend": "distributed.backends",
+    "BudgetCharge": "distributed.backends",
+    "BudgetLimits": "distributed.backends",
+    "ChargeResult": "distributed.backends",
+    "MemoryBackend": "distributed.backends",
+    "BackendQuota": "distributed.backends",
+    "default_memory_backend": "distributed.backends",
+    "SqlBudgetBackend": "distributed.backends.sql_backend",
+    "sql_backend": "distributed.backends.sql_backend",
+    "RedisBudgetBackend": "distributed.backends.redis_backend",
+    "redis_backend": "distributed.backends.redis_backend",
+    "MongoBudgetBackend": "distributed.backends.mongo_backend",
+    "mongo_backend": "distributed.backends.mongo_backend",
+    "DynamoBudgetBackend": "distributed.backends.dynamo_backend",
+    "dynamo_backend": "distributed.backends.dynamo_backend",
+    "PolicyRegistry": "distributed.policy_spec",
+    "CapabilityEnvelope": "distributed.envelope",
+    "EnvelopeSigner": "distributed.envelope",
+    "EnvelopeVerifier": "distributed.envelope",
+    "NonceStore": "distributed.nonces",
+    "MemoryNonceStore": "distributed.nonces",
+    "RedisNonceStore": "distributed.nonces",
+    "SqlNonceStore": "distributed.nonces",
+    "MongoNonceStore": "distributed.nonces",
+    "DynamoNonceStore": "distributed.nonces",
+    "nonce_store_from_env": "distributed.nonces",
+    "ToolRequest": "distributed.events",
+    "ToolResult": "distributed.events",
+    "MintResponse": "distributed.events",
+    "DistributedMode": "distributed.config",
+    "distributed_mode": "distributed.config",
+    "canary_percent": "distributed.config",
+    "gateway_url": "distributed.config",
+    "org_id_from_env": "distributed.config",
+    "load_signing_keys": "distributed.config",
+    "should_enforce_envelope": "distributed.config",
+    "should_require_envelope": "distributed.config",
+    "should_shadow_envelope": "distributed.config",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve old flat names (with a warning) so existing code keeps working."""
+    import warnings
+
+    if name in ("ApprovalRequest", "ReasoningRequest"):
+        warnings.warn(
+            f"{name} is a deprecated alias of Action; import Action instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return Action
+    target = _MOVED.get(name)
+    if target is not None:
+        import importlib
+
+        warnings.warn(
+            f"importing {name} from agent_safety is deprecated; "
+            f"use agent_safety.{target} instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        module = importlib.import_module(f".{target}", __name__)
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

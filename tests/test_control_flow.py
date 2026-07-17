@@ -2,15 +2,12 @@ import asyncio
 
 import pytest
 
-from agent_safety import (
-    ConcurrencyLimit,
-    ListSink,
-    PermissionSet,
-    safely,
-    safety_context,
-    tool,
-)
-from agent_safety.exceptions import PermissionDenied
+from agent_safety import safely, tool
+from agent_safety.core.audit import ListSink
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import PermissionDenied
+from agent_safety.core.limits import ConcurrencyLimit
+from agent_safety.core.permissions import PermissionSet
 
 # -- monitor / dry-run mode ----------------------------------------------
 

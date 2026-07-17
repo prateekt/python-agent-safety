@@ -5,8 +5,8 @@ from __future__ import annotations
 import threading
 import uuid
 
-from agent_safety.backends import BudgetCharge, MemoryBackend
-from agent_safety.policy_spec import PolicySpec
+from agent_safety.distributed.backends import BudgetCharge, MemoryBackend
+from agent_safety.distributed.policy_spec import PolicySpec
 
 
 def main() -> None:

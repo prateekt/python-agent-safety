@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
 
 
 def main() -> None:

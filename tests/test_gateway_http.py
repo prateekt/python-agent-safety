@@ -10,13 +10,14 @@ import uuid
 
 import pytest
 
-from agent_safety.gateway.server import (
+from agent_safety.distributed.backends import MemoryBackend
+from agent_safety.distributed.gateway.server import (
     GatewayConfig,
     PolicyGateway,
     make_service_jwt,
     serve_gateway,
 )
-from agent_safety.policy_spec import PolicySpec
+from agent_safety.distributed.policy_spec import PolicySpec
 
 
 def _free_port() -> int:
@@ -56,7 +57,7 @@ def gateway_server():
         signing_secret=secret,
         jwt_secret=jwt_secret,
         require_auth=True,
-        backend=__import__("agent_safety.backends", fromlist=["MemoryBackend"]).MemoryBackend(),
+        backend=MemoryBackend(),
     ))
     gw.config.registry.publish(spec)
     port = _free_port()

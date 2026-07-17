@@ -4,8 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.exceptions import LoopDetected, QuotaExceeded
+from agent_safety.core.exceptions import LoopDetected, QuotaExceeded
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
 
 
 def test_memory_backend_charges_calls():

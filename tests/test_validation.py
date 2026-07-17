@@ -1,7 +1,10 @@
 import pytest
 
-from agent_safety import PermissionSet, ToolRegistry, safety_context, validate_args
-from agent_safety.exceptions import GuardViolation
+from agent_safety import ToolRegistry
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import GuardViolation
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.core.validation import validate_args
 
 
 def _schema():

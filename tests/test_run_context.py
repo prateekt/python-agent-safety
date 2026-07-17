@@ -1,8 +1,8 @@
 """Tests for audit hash chain and run context stamping."""
 
 from agent_safety import safely, tool
-from agent_safety.audit import AuditEvent, HashChainSink, ListSink
-from agent_safety.run import RunContext, run_context
+from agent_safety.core.audit import AuditEvent, HashChainSink, ListSink
+from agent_safety.distributed.run import RunContext, run_context
 
 
 @tool

@@ -3,12 +3,12 @@
 
 import pytest
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.envelope import EnvelopeSigner, EnvelopeVerifier
-from agent_safety.exceptions import PermissionDenied
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway
-from agent_safety.observability import CircuitBreaker
-from agent_safety.policy_spec import PolicySpec
+from agent_safety.core.exceptions import PermissionDenied
+from agent_safety.core.observability import CircuitBreaker
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
+from agent_safety.distributed.envelope import EnvelopeSigner, EnvelopeVerifier
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway
+from agent_safety.distributed.policy_spec import PolicySpec
 
 
 def test_duplicate_request_id_idempotent():

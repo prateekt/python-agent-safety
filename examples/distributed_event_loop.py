@@ -12,11 +12,12 @@ import threading
 import uuid
 
 from agent_safety import ToolRegistry, safely
-from agent_safety.events import ToolRequest, ToolResult
-from agent_safety.gateway.client import GatewayClient
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway, serve_gateway
-from agent_safety.policy_spec import PolicySpec
-from agent_safety.run import RunContext
+from agent_safety.distributed.backends import MemoryBackend
+from agent_safety.distributed.events import ToolRequest, ToolResult
+from agent_safety.distributed.gateway.client import GatewayClient
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway, serve_gateway
+from agent_safety.distributed.policy_spec import PolicySpec
+from agent_safety.distributed.run import RunContext
 
 registry = ToolRegistry()
 
@@ -29,7 +30,7 @@ def get_weather(city: str) -> str:
 def main() -> None:
     secret = b"dev-signing-secret-32-bytes-long!!"
     spec = PolicySpec(allow=("weather.read",), calls=5, no_repeats=3)
-    backend = __import__("agent_safety.backends", fromlist=["MemoryBackend"]).MemoryBackend()
+    backend = MemoryBackend()
     gw = PolicyGateway(GatewayConfig(require_auth=False, signing_secret=secret, backend=backend, port=18765))
     gw.config.registry.publish(spec)
     serve_gateway(gw, port=18765)

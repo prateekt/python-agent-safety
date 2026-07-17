@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_safety.distributed import (
+from agent_safety.distributed.config import (
     DistributedMode,
     canary_percent,
     distributed_mode,

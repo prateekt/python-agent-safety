@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from agent_safety import safely, tool
-from agent_safety.exceptions import (
+from agent_safety.core.exceptions import (
     ApprovalDenied,
     ExplanationRequired,
     GuardViolation,

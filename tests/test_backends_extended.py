@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.exceptions import QuotaExceeded, RateLimitExceeded, RiskBudgetExceeded
+from agent_safety.core.exceptions import QuotaExceeded, RateLimitExceeded, RiskBudgetExceeded
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
 
 
 def test_rate_limit_enforced():

@@ -2,14 +2,11 @@ import asyncio
 
 import pytest
 
-from agent_safety import (
-    ListSink,
-    PermissionSet,
-    RollbackError,
-    async_rollback,
-    rollback,
-    safety_context,
-)
+from agent_safety.core.audit import ListSink
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import RollbackError
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.core.transaction import async_rollback, rollback
 
 
 def test_commit_on_clean_exit_runs_no_compensation():

@@ -1,25 +1,28 @@
+"""The deprecated ``guarded_tool`` decorator still works (it delegates to the
+same pipeline as ``@tool``) but warns — this file is the intentional coverage
+for that legacy surface."""
+
 import pytest
 
-from agent_safety import (
-    PermissionDenied,
-    PermissionSet,
-    RedactPII,
-    guarded_tool,
-    safety_context,
-)
-from agent_safety.exceptions import GuardViolation
-from agent_safety.guards import MaxLength
+from agent_safety import PermissionDenied
+from agent_safety.core.context import safety_context
+from agent_safety.core.exceptions import GuardViolation
+from agent_safety.core.guards import MaxLength, RedactPII
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.core.pipeline import guarded_tool
 
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
-@guarded_tool("filesystem.read")
-def read_note(path: str) -> str:
-    # Pretend file contents that contain a secret.
-    return f"contents of {path} -- contact admin@corp.com"
+with pytest.warns(DeprecationWarning, match="use @tool"):
 
+    @guarded_tool("filesystem.read")
+    def read_note(path: str) -> str:
+        # Pretend file contents that contain a secret.
+        return f"contents of {path} -- contact admin@corp.com"
 
-@guarded_tool("shell.exec", input_guards=[MaxLength(20)])
-def run_command(cmd: str) -> str:
-    return f"ran: {cmd}"
+    @guarded_tool("shell.exec", input_guards=[MaxLength(20)])
+    def run_command(cmd: str) -> str:
+        return f"ran: {cmd}"
 
 
 def test_denied_without_context():

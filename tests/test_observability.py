@@ -1,17 +1,12 @@
-from agent_safety import (
-    Explanation,
-    MetricsSink,
-    PermissionSet,
-    Policy,
-    current_span,
-    guarded_tool,
-    safety_context,
-    trace_span,
-)
-from agent_safety.audit import AuditEvent
+from agent_safety import tool
+from agent_safety.core.audit import AuditEvent, MetricsSink
+from agent_safety.core.context import safety_context
+from agent_safety.core.permissions import PermissionSet
+from agent_safety.core.policy import Explanation, Policy
+from agent_safety.core.tracing import current_span, trace_span
 
 
-@guarded_tool("x.do")
+@tool("x.do")
 def do_thing():
     return "done"
 

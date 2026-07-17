@@ -14,18 +14,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytest
 
 from agent_safety import safely, tool
-from agent_safety.backends import BudgetCharge, BudgetLimits, MemoryBackend
-from agent_safety.envelope import CapabilityEnvelope, EnvelopeSigner
-from agent_safety.exceptions import (
+from agent_safety.core.exceptions import (
     LoopDetected,
     PermissionDenied,
     QuotaExceeded,
     RateLimitExceeded,
 )
-from agent_safety.gateway.client import GatewayClient
-from agent_safety.gateway.server import GatewayConfig, PolicyGateway, serve_gateway
-from agent_safety.policy_spec import PolicySpec
-from agent_safety.run import RunContext
+from agent_safety.distributed.backends import BudgetCharge, BudgetLimits, MemoryBackend
+from agent_safety.distributed.envelope import CapabilityEnvelope, EnvelopeSigner
+from agent_safety.distributed.gateway.client import GatewayClient
+from agent_safety.distributed.gateway.server import GatewayConfig, PolicyGateway, serve_gateway
+from agent_safety.distributed.policy_spec import PolicySpec
+from agent_safety.distributed.run import RunContext
 
 
 @tool

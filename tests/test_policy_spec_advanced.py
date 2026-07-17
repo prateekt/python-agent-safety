@@ -5,10 +5,10 @@ from __future__ import annotations
 import uuid
 
 from agent_safety import safely, tool
-from agent_safety.envelope import EnvelopeSigner
-from agent_safety.exceptions import PermissionDenied
-from agent_safety.policy_spec import PolicySpec, safely_from_spec
-from agent_safety.run import RunContext
+from agent_safety.core.exceptions import PermissionDenied
+from agent_safety.distributed.envelope import EnvelopeSigner
+from agent_safety.distributed.policy_spec import PolicySpec, safely_from_spec
+from agent_safety.distributed.run import RunContext
 
 
 @tool
@@ -16,11 +16,11 @@ def search(q: str) -> str:
     return f"results: {q}"
 
 
-def test_to_policy_permissions():
+def test_spec_permissions():
     spec = PolicySpec(allow=("search", "summarize"), calls=10, no_repeats=3)
-    policy = spec.to_policy()
-    assert policy.allows("search")
-    assert not policy.allows("shell.exec")
+    perms = spec.permissions()
+    assert perms.allows("search")
+    assert not perms.allows("shell.exec")
 
 
 def test_from_safely_kwargs_budget_string():
